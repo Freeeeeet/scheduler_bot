@@ -1,2 +1,35 @@
-.vscode
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Build artifacts
+bin/
+bot
+*.exe
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
+coverage.txt
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
