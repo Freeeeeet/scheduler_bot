@@ -95,10 +95,23 @@ func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *mod
 		return
 	}
 
-	text := "📚 Ваши предметы:\n\n"
+	// Пагинация: показываем по 10 предметов на странице
+	const pageSize = 10
+	page := 0 // первая страница по умолчанию
+
+	text := fmt.Sprintf("📚 Ваши предметы (всего: %d):\n\n", len(subjects))
 	var buttons [][]models.InlineKeyboardButton
 
-	for i, subject := range subjects {
+	// Вычисляем индексы для текущей страницы
+	startIdx := page * pageSize
+	endIdx := startIdx + pageSize
+	if endIdx > len(subjects) {
+		endIdx = len(subjects)
+	}
+
+	// Показываем предметы текущей страницы
+	for i := startIdx; i < endIdx; i++ {
+		subject := subjects[i]
 		statusEmoji := "✅"
 		statusText := "Активен"
 
@@ -132,6 +145,30 @@ func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *mod
 
 	// Добавляем подсказку о создании слотов
 	text += "\n💡 Совет: Создайте временные слоты через /myschedule чтобы студенты могли записываться!\n\n"
+
+	// Кнопки пагинации
+	totalPages := (len(subjects) + pageSize - 1) / pageSize
+	if totalPages > 1 {
+		var paginationButtons []models.InlineKeyboardButton
+
+		// Кнопка "Предыдущая" только если не первая страница
+		if page > 0 {
+			paginationButtons = append(paginationButtons,
+				models.InlineKeyboardButton{Text: "⬅️ Предыдущая", CallbackData: fmt.Sprintf("subjects_page:%d", page-1)})
+		}
+
+		// Показываем номер страницы
+		paginationButtons = append(paginationButtons,
+			models.InlineKeyboardButton{Text: fmt.Sprintf("📄 %d/%d", page+1, totalPages), CallbackData: "noop"})
+
+		// Кнопка "Следующая" только если не последняя страница
+		if page < totalPages-1 {
+			paginationButtons = append(paginationButtons,
+				models.InlineKeyboardButton{Text: "Следующая ➡️", CallbackData: fmt.Sprintf("subjects_page:%d", page+1)})
+		}
+
+		buttons = append(buttons, paginationButtons)
+	}
 
 	// Кнопка создать новый предмет
 	buttons = append(buttons, []models.InlineKeyboardButton{
@@ -183,12 +220,22 @@ func (h *Handlers) HandleMySchedule(ctx context.Context, b *bot.Bot, update *mod
 		zap.Int64("teacher_id", user.ID),
 		zap.Int("slots_count", len(slots)))
 
-	if len(slots) == 0 {
+	// Подсчитываем статистику
+	totalSlots := len(slots)
+	bookedSlots := 0
+	for _, slot := range slots {
+		if slot.Status == "booked" {
+			bookedSlots++
+		}
+	}
+	freeSlots := totalSlots - bookedSlots
+
+	var text string
+	var buttons [][]models.InlineKeyboardButton
+
+	if totalSlots == 0 {
 		// Получаем предметы для создания слотов
 		subjects, _ := h.teacherService.GetTeacherSubjects(ctx, user.ID)
-
-		h.logger.Info("No slots found, checking subjects",
-			zap.Int("subjects_count", len(subjects)))
 
 		if len(subjects) == 0 {
 			b.SendMessage(ctx, &bot.SendMessageParams{
@@ -198,79 +245,46 @@ func (h *Handlers) HandleMySchedule(ctx context.Context, b *bot.Bot, update *mod
 			return
 		}
 
-		// Если есть предметы, показываем кнопки для создания слотов
-		var buttons [][]models.InlineKeyboardButton
+		text = "📅 <b>Моё расписание</b>\n\n" +
+			"У вас пока нет слотов на ближайшие 7 дней.\n\n" +
+			"Создайте слоты через управление расписанием."
 
-		text := "📅 У вас пока нет слотов в расписании на ближайшие 7 дней.\n\n" +
-			"📚 Ваши активные предметы:\n\n"
-
-		activeCount := 0
-		for i, subject := range subjects {
-			if !subject.IsActive {
-				continue
-			}
-			activeCount++
-			text += fmt.Sprintf("%d. %s (%.2f ₽, %d мин)\n", i+1, subject.Name, float64(subject.Price)/100, subject.Duration)
-			buttons = append(buttons, []models.InlineKeyboardButton{
-				{Text: fmt.Sprintf("➕ Добавить слоты для «%s»", subject.Name), CallbackData: fmt.Sprintf("create_slots:%d", subject.ID)},
-			})
+		buttons = [][]models.InlineKeyboardButton{
+			{
+				{Text: "📊 Управление расписанием", CallbackData: "view_schedule"},
+			},
 		}
+	} else {
+		text = fmt.Sprintf(
+			"📅 <b>Моё расписание</b>\n\n"+
+				"📊 <b>Статистика на 7 дней:</b>\n"+
+				"📋 Всего занятий: %d\n"+
+				"👥 Записались учеников: %d\n"+
+				"🟢 Свободных слотов: %d\n\n"+
+				"Выберите действие:",
+			totalSlots,
+			bookedSlots,
+			freeSlots,
+		)
 
-		h.logger.Info("Active subjects for slot creation",
-			zap.Int("active_count", activeCount))
-
-		if len(buttons) == 0 {
-			b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   "📅 У вас пока нет слотов в расписании.\n\n💡 Активируйте хотя бы один предмет через /mysubjects, чтобы создать слоты.",
-			})
-			return
+		buttons = [][]models.InlineKeyboardButton{
+			{
+				{Text: "📊 Управление расписанием", CallbackData: "view_schedule"},
+			},
+			{
+				{Text: "📅 Просмотреть расписание", CallbackData: "view_schedule_weeks:0"},
+			},
 		}
-
-		text += "\n💡 Выберите предмет, для которого хотите создать временные слоты:"
-
-		keyboard := &models.InlineKeyboardMarkup{
-			InlineKeyboard: buttons,
-		}
-
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      update.Message.Chat.ID,
-			Text:        text,
-			ReplyMarkup: keyboard,
-		})
-		return
 	}
 
-	text := "📅 Ваше расписание (7 дней):\n\n"
-	for i, slot := range slots {
-		statusEmoji := "🟢"
-		statusText := "Свободен"
-		switch slot.Status {
-		case "booked":
-			statusEmoji = "🔴"
-			statusText = "Забронирован"
-		case "canceled":
-			statusEmoji = "⚫️"
-			statusText = "Отменён"
-		}
-
-		text += fmt.Sprintf(
-			"%d. %s %s\n"+
-				"   📅 %s\n"+
-				"   🕐 %s - %s\n"+
-				"   Статус: %s\n\n",
-			i+1,
-			statusEmoji,
-			slot.StartTime.Format("02.01.2006"),
-			slot.StartTime.Weekday(),
-			slot.StartTime.Format("15:04"),
-			slot.EndTime.Format("15:04"),
-			statusText,
-		)
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   text,
+		ChatID:      update.Message.Chat.ID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: keyboard,
 	})
 }

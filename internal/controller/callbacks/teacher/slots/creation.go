@@ -1,4 +1,4 @@
-package teacher
+package slots
 
 import (
 	"context"
@@ -9,66 +9,11 @@ import (
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common/formatting"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
 )
-
-// ========================
-// Schedule Management Handlers
-// ========================
-
-// HandleViewSchedule показывает расписание учителя
-func HandleViewSchedule(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
-	h.Logger.Info("HandleViewSchedule called",
-		zap.Int64("user_id", callback.From.ID))
-
-	msg := common.GetMessageFromCallback(callback)
-	if msg == nil {
-		h.Logger.Error("Failed to get message from callback")
-		common.AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
-		return
-	}
-
-	// Удаляем старое сообщение
-	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-		ChatID:    msg.Chat.ID,
-		MessageID: msg.ID,
-	})
-
-	// Отправляем новое (через HandleMySchedule)
-	update := &models.Update{
-		Message: &models.Message{
-			Chat: models.Chat{ID: msg.Chat.ID},
-			From: &callback.From,
-		},
-	}
-
-	h.HandleMySchedule(ctx, b, update)
-	common.AnswerCallback(ctx, b, callback.ID, "")
-}
-
-// HandleAddSlots начинает процесс добавления слотов
-func HandleAddSlots(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
-	msg := common.GetMessageFromCallback(callback)
-	if msg == nil {
-		common.AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
-		return
-	}
-
-	text := "🕐 Добавление временных слотов\n\n" +
-		"Для добавления слотов используйте команду:\n" +
-		"/addslots\n\n" +
-		"Или создайте слоты через API."
-
-	b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID:    msg.Chat.ID,
-		MessageID: msg.ID,
-		Text:      text,
-	})
-
-	common.AnswerCallback(ctx, b, callback.ID, "Добавление слотов")
-}
 
 // HandleCreateSlotsStart начинает процесс создания слотов для предмета
 func HandleCreateSlotsStart(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
@@ -101,7 +46,7 @@ func HandleCreateSlotsStart(ctx context.Context, b *bot.Bot, callback *models.Ca
 		zap.Int64("telegram_id", telegramID),
 		zap.Int64("subject_id", subjectID))
 
-	// Сначала спрашиваем режим создания слотов
+	// Показываем выбор режима создания слотов
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
@@ -117,7 +62,7 @@ func HandleCreateSlotsStart(ctx context.Context, b *bot.Bot, callback *models.Ca
 				{Text: "⚡️ Заполнить рабочий день (9-18)", CallbackData: fmt.Sprintf("slot_mode:%d:workday", subjectID)},
 			},
 			{
-				{Text: "❌ Отмена", CallbackData: "back_to_main"},
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("subject_schedule:%d", subjectID)},
 			},
 		},
 	}
@@ -142,11 +87,11 @@ func HandleCreateSlotsStart(ctx context.Context, b *bot.Bot, callback *models.Ca
 		return
 	}
 
-	h.Logger.Info("Weekday selection message sent successfully")
+	h.Logger.Info("Mode selection message sent successfully")
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
-// HandleSetWeekday обрабатывает выбор дня недели и показывает выбор времени
+// HandleSetWeekday обрабатывает выбор дня недели и показывает выбор времени (для recurring)
 func HandleSetWeekday(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
 	h.Logger.Info("HandleSetWeekday called",
 		zap.String("callback_data", callback.Data),
@@ -185,51 +130,69 @@ func HandleSetWeekday(ctx context.Context, b *bot.Bot, callback *models.Callback
 		return
 	}
 
-	// Мапа для названий дней недели
-	weekdayNames := map[int]string{
-		0: "Воскресенье",
-		1: "Понедельник",
-		2: "Вторник",
-		3: "Среда",
-		4: "Четверг",
-		5: "Пятница",
-		6: "Суббота",
+	// Получаем предмет для определения длительности
+	subject, err := h.TeacherService.GetSubjectByID(ctx, subjectID)
+	if err != nil || subject == nil {
+		h.Logger.Error("Failed to get subject", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Предмет не найден")
+		return
 	}
 
-	// Кнопки для выбора времени (популярные часы)
+	// Генерируем временные слоты на основе длительности занятия
+	duration := subject.Duration // в минутах
+	var buttons [][]models.InlineKeyboardButton
+
+	// Генерируем слоты с 00:00 до 23:59 с шагом в длительность занятия
+	now := time.Now()
+	currentTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	endOfDay := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, now.Location())
+
+	var row []models.InlineKeyboardButton
+	for currentTime.Before(endOfDay) {
+		timeStr := currentTime.Format("15:04")
+		hour := currentTime.Hour()
+		minute := currentTime.Minute()
+
+		row = append(row, models.InlineKeyboardButton{
+			Text:         timeStr,
+			CallbackData: fmt.Sprintf("set_time:%d:%d:%d:%d", subjectID, weekdayNum, hour, minute),
+		})
+
+		// По 3 кнопки в ряд для компактности
+		if len(row) == 3 {
+			buttons = append(buttons, row)
+			row = []models.InlineKeyboardButton{}
+		}
+
+		currentTime = currentTime.Add(time.Duration(duration) * time.Minute)
+	}
+
+	// Добавляем оставшиеся кнопки
+	if len(row) > 0 {
+		buttons = append(buttons, row)
+	}
+
+	// Кнопка для ввода своего времени
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⌨️ Ввести своё время", CallbackData: fmt.Sprintf("custom_recurring_time:%d:%d", subjectID, weekdayNum)},
+	})
+
+	// Кнопка "Назад"
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
+	})
+
 	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "09:00", CallbackData: fmt.Sprintf("set_time:%d:%d:9", subjectID, weekdayNum)},
-				{Text: "10:00", CallbackData: fmt.Sprintf("set_time:%d:%d:10", subjectID, weekdayNum)},
-				{Text: "11:00", CallbackData: fmt.Sprintf("set_time:%d:%d:11", subjectID, weekdayNum)},
-			},
-			{
-				{Text: "12:00", CallbackData: fmt.Sprintf("set_time:%d:%d:12", subjectID, weekdayNum)},
-				{Text: "13:00", CallbackData: fmt.Sprintf("set_time:%d:%d:13", subjectID, weekdayNum)},
-				{Text: "14:00", CallbackData: fmt.Sprintf("set_time:%d:%d:14", subjectID, weekdayNum)},
-			},
-			{
-				{Text: "15:00", CallbackData: fmt.Sprintf("set_time:%d:%d:15", subjectID, weekdayNum)},
-				{Text: "16:00", CallbackData: fmt.Sprintf("set_time:%d:%d:16", subjectID, weekdayNum)},
-				{Text: "17:00", CallbackData: fmt.Sprintf("set_time:%d:%d:17", subjectID, weekdayNum)},
-			},
-			{
-				{Text: "18:00", CallbackData: fmt.Sprintf("set_time:%d:%d:18", subjectID, weekdayNum)},
-				{Text: "19:00", CallbackData: fmt.Sprintf("set_time:%d:%d:19", subjectID, weekdayNum)},
-				{Text: "20:00", CallbackData: fmt.Sprintf("set_time:%d:%d:20", subjectID, weekdayNum)},
-			},
-			{
-				{Text: "❌ Отмена", CallbackData: "back_to_main"},
-			},
-		},
+		InlineKeyboard: buttons,
 	}
 
 	text := fmt.Sprintf("📅 Создание постоянного расписания (Шаг 2/2)\n\n"+
-		"День недели: %s\n\n"+
+		"День недели: %s\n"+
+		"⏱ Длительность: %d мин\n\n"+
+		"Временные слоты рассчитаны автоматически.\n"+
 		"Выберите время начала занятия:\n\n"+
 		"🔄 Будет создано постоянное еженедельное расписание\n"+
-		"📆 Слоты автоматически создаются на 4 недели вперёд", weekdayNames[weekdayNum])
+		"📆 Слоты автоматически создаются на 4 недели вперёд", formatting.GetWeekdayName(weekdayNum), duration)
 
 	h.Logger.Info("Sending time selection message",
 		zap.Int64("chat_id", msg.Chat.ID),
@@ -256,15 +219,15 @@ func HandleSetWeekday(ctx context.Context, b *bot.Bot, callback *models.Callback
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
-// HandleSetTime создает слоты для выбранного времени
+// HandleSetTime создает слоты для выбранного времени (recurring slots)
 func HandleSetTime(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
 	h.Logger.Info("HandleSetTime called",
 		zap.String("callback_data", callback.Data),
 		zap.Int64("user_id", callback.From.ID))
 
-	// Формат: set_time:123:1:9  (subject_id:weekday:hour)
+	// Формат: set_time:123:1:9:0  (subject_id:weekday:hour:minute)
 	parts := strings.Split(callback.Data, ":")
-	if len(parts) != 4 {
+	if len(parts) != 5 {
 		h.Logger.Error("Invalid callback format", zap.String("data", callback.Data))
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
 		return
@@ -288,6 +251,13 @@ func HandleSetTime(ctx context.Context, b *bot.Bot, callback *models.CallbackQue
 	if err != nil {
 		h.Logger.Error("Failed to parse hour", zap.Error(err))
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверное время")
+		return
+	}
+
+	minute, err := strconv.Atoi(parts[4])
+	if err != nil {
+		h.Logger.Error("Failed to parse minute", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверные минуты")
 		return
 	}
 
@@ -317,11 +287,12 @@ func HandleSetTime(ctx context.Context, b *bot.Bot, callback *models.CallbackQue
 		zap.Int64("subject_id", subjectID),
 		zap.Int("weekday", weekdayNum),
 		zap.Int("hour", hour),
+		zap.Int("minute", minute),
 		zap.Int("duration", subject.Duration))
 
 	// Создаем слоты на 4 недели
 	weekday := time.Weekday(weekdayNum)
-	err = h.TeacherService.CreateWeeklySlots(ctx, user.ID, subjectID, weekday, hour, 0, subject.Duration)
+	err = h.TeacherService.CreateWeeklySlots(ctx, user.ID, subjectID, weekday, hour, minute, subject.Duration)
 	if err != nil {
 		h.Logger.Error("Failed to create weekly slots",
 			zap.Int64("teacher_id", user.ID),
@@ -335,29 +306,20 @@ func HandleSetTime(ctx context.Context, b *bot.Bot, callback *models.CallbackQue
 		zap.Int64("teacher_id", user.ID),
 		zap.Int64("subject_id", subjectID))
 
-	weekdayNames := map[int]string{
-		0: "Воскресенье",
-		1: "Понедельник",
-		2: "Вторник",
-		3: "Среда",
-		4: "Четверг",
-		5: "Пятница",
-		6: "Суббота",
-	}
-
 	msg := common.GetMessageFromCallback(callback)
 	if msg != nil {
 		text := fmt.Sprintf("✅ Постоянное расписание создано!\n\n"+
 			"📚 Предмет: %s\n"+
 			"📅 День: %s\n"+
-			"🕐 Время: %02d:00\n"+
+			"🕐 Время: %02d:%02d\n"+
 			"⏱ Длительность: %d мин\n\n"+
 			"🔄 Автоматически создаются слоты каждую неделю\n"+
 			"📆 Сейчас доступны слоты на 4 недели вперёд\n\n"+
 			"Посмотреть расписание: /myschedule",
 			subject.Name,
-			weekdayNames[weekdayNum],
+			formatting.GetWeekdayName(weekdayNum),
 			hour,
+			minute,
 			subject.Duration)
 
 		b.EditMessageText(ctx, &bot.EditMessageTextParams{
@@ -370,7 +332,7 @@ func HandleSetTime(ctx context.Context, b *bot.Bot, callback *models.CallbackQue
 	common.AnswerCallbackAlert(ctx, b, callback.ID, "✅ Постоянное расписание создано!")
 }
 
-// HandleManualBook позволяет учителю вручную записать студента
+// HandleManualBook позволяет учителю вручную записать студента (в разработке)
 func HandleManualBook(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
 	msg := common.GetMessageFromCallback(callback)
 	if msg == nil {

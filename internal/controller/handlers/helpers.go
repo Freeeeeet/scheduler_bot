@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 
+	cmdfmt "github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common/formatting"
 	"github.com/Freeeeeet/scheduler_bot/internal/model"
 )
 
@@ -13,21 +14,13 @@ type BookingStatusDisplay struct {
 }
 
 // GetBookingStatusDisplay возвращает emoji и текст для статуса бронирования
+// Deprecated: используйте cmdfmt.GetBookingStatusDisplay
 func GetBookingStatusDisplay(status model.BookingStatus) BookingStatusDisplay {
-	displays := map[model.BookingStatus]BookingStatusDisplay{
-		model.BookingStatusPending:   {"⏳", "Ожидает одобрения"},
-		model.BookingStatusConfirmed: {"✅", "Подтверждена"},
-		model.BookingStatusCompleted: {"✔️", "Завершена"},
-		model.BookingStatusCanceled:  {"❌", "Отменена"},
-		model.BookingStatusRejected:  {"🚫", "Отклонена"},
+	display := cmdfmt.GetBookingStatusDisplay(status)
+	return BookingStatusDisplay{
+		Emoji: display.Emoji,
+		Text:  display.Text,
 	}
-
-	if display, ok := displays[status]; ok {
-		return display
-	}
-
-	// Fallback для неизвестных статусов
-	return BookingStatusDisplay{"❓", "Неизвестно"}
 }
 
 // FormatBooking форматирует бронирование для отображения
@@ -46,7 +39,7 @@ func FormatBooking(booking *model.Booking) string {
 }
 
 // FormatPrice форматирует цену из копеек в рубли
+// Deprecated: используйте cmdfmt.FormatPrice
 func FormatPrice(priceInCents int) string {
-	price := float64(priceInCents) / 100
-	return fmt.Sprintf("%.2f ₽", price)
+	return cmdfmt.FormatPrice(priceInCents)
 }

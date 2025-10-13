@@ -47,3 +47,33 @@ func ParseIDFromCallback(data string) (int64, error) {
 	}
 	return strconv.ParseInt(parts[1], 10, 64)
 }
+
+// ParseMultiIDFromCallback извлекает несколько ID из callback data
+// Например: "request_recurring_confirm:123:456" с префиксом "request_recurring_confirm:" -> [123, 456]
+func ParseMultiIDFromCallback(callbackData string, prefix string) []int64 {
+	// Убираем префикс
+	data := strings.TrimPrefix(callbackData, prefix)
+	parts := strings.Split(data, ":")
+
+	var ids []int64
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err == nil {
+			ids = append(ids, id)
+		}
+	}
+
+	return ids
+}
+
+// IsMessageNotModifiedError проверяет является ли ошибка "message is not modified"
+// Это не настоящая ошибка - просто сообщение уже имеет нужное содержимое
+func IsMessageNotModifiedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "message is not modified")
+}

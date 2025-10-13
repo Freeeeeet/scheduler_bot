@@ -1,4 +1,4 @@
-package teacher
+package subjects
 
 import (
 	"context"

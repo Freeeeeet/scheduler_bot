@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/state"
 	"github.com/go-telegram/bot"
@@ -160,7 +162,155 @@ func (h *Handlers) HandleTextMessage(ctx context.Context, b *bot.Bot, update *mo
 		h.handleEditSubjectPrice(ctx, b, update)
 	case state.StateEditSubjectDuration:
 		h.handleEditSubjectDuration(ctx, b, update)
+	case "custom_slot_time":
+		h.handleCustomSlotTime(ctx, b, update)
 	default:
 		h.logger.Warn("Unknown state", zap.String("state", string(currentState)))
 	}
+}
+
+// handleCustomSlotTime обрабатывает ввод кастомного времени для слота
+func (h *Handlers) handleCustomSlotTime(ctx context.Context, b *bot.Bot, update *models.Update) {
+	telegramID := update.Message.From.ID
+	timeText := strings.TrimSpace(update.Message.Text)
+
+	h.logger.Info("Processing custom slot time",
+		zap.Int64("telegram_id", telegramID),
+		zap.String("time", timeText))
+
+	// Получаем сохранённые данные
+	subjectIDData, ok1 := h.stateManager.GetData(telegramID, "subject_id")
+	dateStrData, ok2 := h.stateManager.GetData(telegramID, "date_str")
+
+	if !ok1 || !ok2 {
+		h.logger.Error("Missing data for custom slot time",
+			zap.Int64("telegram_id", telegramID))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка: данные не найдены. Начните заново через /mysubjects",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	subjectID, ok := subjectIDData.(int64)
+	if !ok {
+		h.logger.Error("Invalid subject ID type", zap.Any("data", subjectIDData))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка: неверный формат данных",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	dateStr, ok := dateStrData.(string)
+	if !ok {
+		h.logger.Error("Invalid date string type", zap.Any("data", dateStrData))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка: неверный формат данных",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Используем логику из teacher package
+	// Встраиваем обработку времени здесь (можно вынести в service позже)
+	h.processCustomSlotTime(ctx, b, update, timeText, subjectID, dateStr)
+}
+
+// processCustomSlotTime обрабатывает введенное пользователем время
+func (h *Handlers) processCustomSlotTime(ctx context.Context, b *bot.Bot, update *models.Update, timeText string, subjectID int64, dateStr string) {
+	telegramID := update.Message.From.ID
+
+	// Проверяем формат времени (ЧЧ:ММ)
+	timeRegex := regexp.MustCompile(`^([0-1][0-9]|2[0-3]):([0-5][0-9])$`)
+	if !timeRegex.MatchString(timeText) {
+		h.logger.Warn("Invalid time format",
+			zap.String("time", timeText))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text: "❌ Неверный формат времени!\n\n" +
+				"Используйте формат <b>ЧЧ:ММ</b> (например, 09:30 или 14:45)\n\n" +
+				"Попробуйте еще раз или отправьте /cancel для отмены.",
+			ParseMode: models.ParseModeHTML,
+		})
+		return
+	}
+
+	user, err := h.userService.GetByTelegramID(ctx, telegramID)
+	if err != nil || user == nil {
+		h.logger.Error("User not found", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Пользователь не найден",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Получаем предмет
+	subject, err := h.teacherService.GetSubjectByID(ctx, subjectID)
+	if err != nil || subject == nil {
+		h.logger.Error("Subject not found", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Предмет не найден",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Парсим дату и время
+	dateTimeStr := fmt.Sprintf("%s %s", dateStr, timeText)
+	startTime, err := time.Parse("2006-01-02 15:04", dateTimeStr)
+	if err != nil {
+		h.logger.Error("Failed to parse datetime", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Не удалось обработать дату/время",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	endTime := startTime.Add(time.Duration(subject.Duration) * time.Minute)
+
+	// Создаем слот
+	slot, err := h.teacherService.CreateSlot(ctx, user.ID, subjectID, startTime, endTime)
+	if err != nil {
+		h.logger.Error("Failed to create slot", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   fmt.Sprintf("❌ Не удалось создать слот: %v", err),
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	h.logger.Info("Slot created successfully via custom time",
+		zap.Int64("slot_id", slot.ID),
+		zap.Time("start_time", startTime))
+
+	// Очищаем состояние
+	h.stateManager.ClearState(telegramID)
+
+	text := fmt.Sprintf("✅ <b>Слот создан!</b>\n\n"+
+		"📚 Предмет: %s\n"+
+		"📅 Дата: %s\n"+
+		"🕐 Время: %s - %s\n"+
+		"⏱ Длительность: %d мин\n\n"+
+		"Посмотреть расписание: /myschedule",
+		subject.Name,
+		startTime.Format("02.01.2006 (Monday)"),
+		startTime.Format("15:04"),
+		endTime.Format("15:04"),
+		subject.Duration)
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:    update.Message.Chat.ID,
+		Text:      text,
+		ParseMode: models.ParseModeHTML,
+	})
 }

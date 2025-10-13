@@ -42,6 +42,7 @@ func NewHandler(
 	logger *zap.Logger,
 	handleSubjects func(ctx context.Context, b *bot.Bot, update *models.Update),
 	handleMySchedule func(ctx context.Context, b *bot.Bot, update *models.Update),
+	handleMySubjects func(ctx context.Context, b *bot.Bot, update *models.Update),
 ) *Handler {
 	inner := &callbacktypes.Handler{
 		UserService:      userService,
@@ -51,6 +52,7 @@ func NewHandler(
 		Logger:           logger,
 		HandleSubjects:   handleSubjects,
 		HandleMySchedule: handleMySchedule,
+		HandleMySubjects: handleMySubjects,
 	}
 	return &Handler{Handler: inner}
 }

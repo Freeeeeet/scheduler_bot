@@ -7,6 +7,7 @@ import (
 
 	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/Freeeeeet/scheduler_bot/internal/repository"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -269,6 +270,7 @@ func (s *TeacherService) GetTeacherBookings(ctx context.Context, teacherID int64
 }
 
 // CreateWeeklySlots создаёт регулярное расписание (recurring schedule) и первичные слоты
+// Этот метод устарел, используйте CreateWeeklySlotsGroup для создания группы расписаний
 func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subjectID int64, weekday time.Weekday, startHour, startMinute, durationMinutes int) error {
 	// Проверяем что предмет принадлежит учителю
 	subject, err := s.subjectRepo.GetByID(ctx, subjectID)
@@ -286,6 +288,7 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 
 	// Создаём recurring schedule (шаблон регулярного расписания)
 	recurringSchedule := &model.RecurringSchedule{
+		GroupID:         uuid.New(), // Генерируем уникальный group_id для одиночного расписания
 		TeacherID:       teacherID,
 		SubjectID:       subjectID,
 		Weekday:         int(weekday),
@@ -302,6 +305,7 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 
 	s.logger.Info("Recurring schedule created",
 		zap.Int64("recurring_schedule_id", recurringSchedule.ID),
+		zap.String("group_id", recurringSchedule.GroupID.String()),
 		zap.Int64("teacher_id", teacherID),
 		zap.Int64("subject_id", subjectID),
 		zap.Int("weekday", int(weekday)),
@@ -320,6 +324,81 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 	)
 
 	return nil
+}
+
+// CreateWeeklySlotsGroup создаёт группу регулярных расписаний с общим group_id
+// weekdays - массив дней недели (0 = Sunday, 6 = Saturday)
+// timeSlots - массив временных слотов (час и минута)
+func (s *TeacherService) CreateWeeklySlotsGroup(ctx context.Context, teacherID, subjectID int64, weekdays []int, timeSlots []struct{ Hour, Minute int }, durationMinutes int) (uuid.UUID, error) {
+	// Проверяем что предмет принадлежит учителю
+	subject, err := s.subjectRepo.GetByID(ctx, subjectID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("get subject: %w", err)
+	}
+
+	if subject == nil {
+		return uuid.Nil, fmt.Errorf("subject not found")
+	}
+
+	if subject.TeacherID != teacherID {
+		return uuid.Nil, fmt.Errorf("subject does not belong to teacher")
+	}
+
+	// Генерируем общий group_id для всей группы
+	groupID := uuid.New()
+
+	// Создаём recurring schedules для каждого дня и каждого времени
+	createdCount := 0
+	for _, weekday := range weekdays {
+		for _, slot := range timeSlots {
+			recurringSchedule := &model.RecurringSchedule{
+				GroupID:         groupID,
+				TeacherID:       teacherID,
+				SubjectID:       subjectID,
+				Weekday:         weekday,
+				StartHour:       slot.Hour,
+				StartMinute:     slot.Minute,
+				DurationMinutes: durationMinutes,
+				IsActive:        true,
+			}
+
+			err = s.recurringRepo.Create(ctx, recurringSchedule)
+			if err != nil {
+				s.logger.Error("Failed to create recurring schedule",
+					zap.Error(err),
+					zap.String("group_id", groupID.String()),
+					zap.Int("weekday", weekday),
+					zap.Int("hour", slot.Hour),
+					zap.Int("minute", slot.Minute))
+				continue
+			}
+
+			// Создаём начальные слоты на следующие 4 недели
+			count, err := s.generateSlotsForRecurringSchedule(ctx, recurringSchedule, 4)
+			if err != nil {
+				s.logger.Error("Failed to generate initial slots",
+					zap.Error(err),
+					zap.Int64("recurring_schedule_id", recurringSchedule.ID))
+			} else {
+				s.logger.Debug("Generated initial slots",
+					zap.Int64("recurring_schedule_id", recurringSchedule.ID),
+					zap.Int("count", count))
+			}
+
+			createdCount++
+		}
+	}
+
+	s.logger.Info("Recurring schedule group created",
+		zap.String("group_id", groupID.String()),
+		zap.Int64("teacher_id", teacherID),
+		zap.Int64("subject_id", subjectID),
+		zap.Int("weekdays_count", len(weekdays)),
+		zap.Int("time_slots_count", len(timeSlots)),
+		zap.Int("total_created", createdCount),
+	)
+
+	return groupID, nil
 }
 
 // generateSlotsForRecurringSchedule генерирует слоты для recurring schedule на указанное количество недель
@@ -425,6 +504,11 @@ func (s *TeacherService) GetRecurringSchedulesBySubject(ctx context.Context, sub
 	return s.recurringRepo.GetBySubjectID(ctx, subjectID)
 }
 
+// GetRecurringScheduleByID возвращает recurring schedule по ID
+func (s *TeacherService) GetRecurringScheduleByID(ctx context.Context, scheduleID int64) (*model.RecurringSchedule, error) {
+	return s.recurringRepo.GetByID(ctx, scheduleID)
+}
+
 // DeactivateRecurringSchedule деактивирует recurring schedule
 func (s *TeacherService) DeactivateRecurringSchedule(ctx context.Context, teacherID, scheduleID int64) error {
 	schedule, err := s.recurringRepo.GetByID(ctx, scheduleID)
@@ -459,4 +543,179 @@ func (s *TeacherService) DeleteRecurringSchedule(ctx context.Context, teacherID,
 	}
 
 	return s.recurringRepo.Delete(ctx, scheduleID)
+}
+
+// GetSlotByID получает слот по ID
+func (s *TeacherService) GetSlotByID(ctx context.Context, slotID int64) (*model.ScheduleSlot, error) {
+	return s.slotRepo.GetByID(ctx, slotID)
+}
+
+// CancelSlot отменяет свободный слот
+func (s *TeacherService) CancelSlot(ctx context.Context, slotID int64) error {
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get slot: %w", err)
+	}
+
+	if slot == nil {
+		return fmt.Errorf("slot not found")
+	}
+
+	if slot.Status != model.SlotStatusFree {
+		return fmt.Errorf("can only cancel free slots")
+	}
+
+	err = s.slotRepo.Cancel(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("cancel slot: %w", err)
+	}
+
+	s.logger.Info("Slot canceled",
+		zap.Int64("slot_id", slotID),
+		zap.Int64("teacher_id", slot.TeacherID),
+	)
+
+	return nil
+}
+
+// RestoreSlot восстанавливает отменённый слот
+func (s *TeacherService) RestoreSlot(ctx context.Context, slotID int64) error {
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get slot: %w", err)
+	}
+
+	if slot == nil {
+		return fmt.Errorf("slot not found")
+	}
+
+	if slot.Status != model.SlotStatusCanceled {
+		return fmt.Errorf("can only restore canceled slots")
+	}
+
+	// Восстанавливаем слот как свободный
+	err = s.slotRepo.UpdateStatus(ctx, slotID, model.SlotStatusFree)
+	if err != nil {
+		return fmt.Errorf("restore slot: %w", err)
+	}
+
+	s.logger.Info("Slot restored",
+		zap.Int64("slot_id", slotID),
+		zap.Int64("teacher_id", slot.TeacherID),
+	)
+
+	return nil
+}
+
+// CancelBookingBySlot отменяет бронирование по слоту
+func (s *TeacherService) CancelBookingBySlot(ctx context.Context, slotID int64, teacherID int64) error {
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get slot: %w", err)
+	}
+
+	if slot == nil {
+		return fmt.Errorf("slot not found")
+	}
+
+	if slot.TeacherID != teacherID {
+		return fmt.Errorf("slot does not belong to teacher")
+	}
+
+	if slot.Status != model.SlotStatusBooked {
+		return fmt.Errorf("slot is not booked")
+	}
+
+	// Получаем активное бронирование для этого слота
+	activeBooking, err := s.bookingRepo.GetBySlotID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get booking: %w", err)
+	}
+
+	if activeBooking == nil {
+		return fmt.Errorf("no active booking found for this slot")
+	}
+
+	// Отменяем бронирование
+	err = s.bookingRepo.UpdateStatus(ctx, activeBooking.ID, model.BookingStatusCanceled)
+	if err != nil {
+		return fmt.Errorf("update booking status: %w", err)
+	}
+
+	// Освобождаем слот
+	err = s.slotRepo.Cancel(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("cancel slot: %w", err)
+	}
+
+	s.logger.Info("Booking canceled by teacher",
+		zap.Int64("booking_id", activeBooking.ID),
+		zap.Int64("slot_id", slotID),
+		zap.Int64("teacher_id", teacherID),
+	)
+
+	return nil
+}
+
+// GetRecurringSchedulesByGroupID получает все recurring schedules по group_id
+func (s *TeacherService) GetRecurringSchedulesByGroupID(ctx context.Context, groupID string) ([]*model.RecurringSchedule, error) {
+	return s.recurringRepo.GetByGroupID(ctx, groupID)
+}
+
+// DeactivateRecurringScheduleGroup деактивирует всю группу recurring schedules
+func (s *TeacherService) DeactivateRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID string) error {
+	// Проверяем что группа принадлежит учителю
+	schedules, err := s.recurringRepo.GetByGroupID(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("get recurring schedules by group_id: %w", err)
+	}
+
+	if len(schedules) == 0 {
+		return fmt.Errorf("recurring schedule group not found")
+	}
+
+	if schedules[0].TeacherID != teacherID {
+		return fmt.Errorf("recurring schedule group does not belong to teacher")
+	}
+
+	err = s.recurringRepo.DeactivateByGroupID(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("deactivate recurring schedule group: %w", err)
+	}
+
+	s.logger.Info("Recurring schedule group deactivated",
+		zap.String("group_id", groupID),
+		zap.Int64("teacher_id", teacherID),
+	)
+
+	return nil
+}
+
+// DeleteRecurringScheduleGroup удаляет всю группу recurring schedules
+func (s *TeacherService) DeleteRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID string) error {
+	// Проверяем что группа принадлежит учителю
+	schedules, err := s.recurringRepo.GetByGroupID(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("get recurring schedules by group_id: %w", err)
+	}
+
+	if len(schedules) == 0 {
+		return fmt.Errorf("recurring schedule group not found")
+	}
+
+	if schedules[0].TeacherID != teacherID {
+		return fmt.Errorf("recurring schedule group does not belong to teacher")
+	}
+
+	err = s.recurringRepo.DeleteByGroupID(ctx, groupID)
+	if err != nil {
+		return fmt.Errorf("delete recurring schedule group: %w", err)
+	}
+
+	s.logger.Info("Recurring schedule group deleted",
+		zap.String("group_id", groupID),
+		zap.Int64("teacher_id", teacherID),
+	)
+
+	return nil
 }

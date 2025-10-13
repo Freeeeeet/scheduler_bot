@@ -89,3 +89,53 @@ func HandleBookAnother(ctx context.Context, b *bot.Bot, callback *models.Callbac
 	h.HandleSubjects(ctx, b, update)
 	AnswerCallback(ctx, b, callback.ID, "Показываем предметы")
 }
+
+// HandleBackToSubjects возвращает учителя к списку его предметов
+func HandleBackToSubjects(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	msg := GetMessageFromCallback(callback)
+	if msg == nil {
+		AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
+		return
+	}
+
+	// Удаляем сообщение и вызываем HandleMySubjects
+	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    msg.Chat.ID,
+		MessageID: msg.ID,
+	})
+
+	update := &models.Update{
+		Message: &models.Message{
+			Chat: models.Chat{ID: msg.Chat.ID},
+			From: &callback.From,
+		},
+	}
+
+	h.HandleMySubjects(ctx, b, update)
+	AnswerCallback(ctx, b, callback.ID, "")
+}
+
+// HandleBackToMySchedule возвращает к главному меню /myschedule
+func HandleBackToMySchedule(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	msg := GetMessageFromCallback(callback)
+	if msg == nil {
+		AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
+		return
+	}
+
+	// Удаляем сообщение и вызываем HandleMySchedule
+	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+		ChatID:    msg.Chat.ID,
+		MessageID: msg.ID,
+	})
+
+	update := &models.Update{
+		Message: &models.Message{
+			Chat: models.Chat{ID: msg.Chat.ID},
+			From: &callback.From,
+		},
+	}
+
+	h.HandleMySchedule(ctx, b, update)
+	AnswerCallback(ctx, b, callback.ID, "")
+}

@@ -50,6 +50,7 @@ func NewBotController(
 		logger,
 		cmdHandlers.HandleSubjects,
 		cmdHandlers.HandleMySchedule,
+		cmdHandlers.HandleMySubjects,
 	)
 
 	return &BotController{

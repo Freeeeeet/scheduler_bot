@@ -1,4 +1,4 @@
-package teacher
+package subjects
 
 import (
 	"context"
@@ -39,7 +39,7 @@ func HandleCreateFirstSubject(ctx context.Context, b *bot.Bot, callback *models.
 
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{{
-			{Text: "❌ Отменить", CallbackData: "back_to_main"},
+			{Text: "⬅️ Назад", CallbackData: "back_to_subjects"},
 		}},
 	}
 
@@ -195,7 +195,7 @@ func finalizeSubjectCreation(ctx context.Context, b *bot.Bot, callback *models.C
 	common.AnswerCallback(ctx, b, callback.ID, "✅ Предмет создан!")
 }
 
-// HandleViewSubject показывает детали предмета
+// HandleViewSubject показывает детали предмета (для учителя-владельца)
 func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
 	h.Logger.Info("HandleViewSubject called",
 		zap.String("callback_data", callback.Data),
@@ -230,12 +230,6 @@ func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		zap.Int64("subject_id", subjectID),
 		zap.String("name", subject.Name))
 
-	// Получаем информацию об учителе
-	teacher, err := h.UserService.GetByID(ctx, subject.TeacherID)
-	if err != nil || teacher == nil {
-		teacher = &model.User{FirstName: "Неизвестный"}
-	}
-
 	price := float64(subject.Price) / 100
 	statusText := "✅ Активен"
 	if !subject.IsActive {
@@ -248,15 +242,14 @@ func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 	}
 
 	text := fmt.Sprintf(
-		"📚 **%s**\n\n"+
-			"👤 Учитель: %s\n"+
+		"📚 <b>%s</b>\n\n"+
 			"📝 Описание: %s\n"+
 			"💰 Цена: %.2f ₽\n"+
 			"⏱ Длительность: %d мин\n"+
 			"📊 Статус: %s\n"+
-			"⏳ Требуется одобрение: %s",
+			"⏳ Требуется одобрение: %s\n\n"+
+			"Выберите действие:",
 		subject.Name,
-		teacher.FirstName,
 		subject.Description,
 		price,
 		subject.Duration,
@@ -267,21 +260,38 @@ func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
-				{Text: "📅 Посмотреть расписание", CallbackData: fmt.Sprintf("view_schedule_subject:%d", subjectID)},
+				{Text: "📅 Посмотреть расписание", CallbackData: fmt.Sprintf("view_schedule_calendar:%d", subjectID)},
 			},
 			{
-				{Text: "⬅️ Назад к списку", CallbackData: "book_another"},
+				{Text: "📊 Управление расписанием", CallbackData: fmt.Sprintf("subject_schedule:%d", subjectID)},
+			},
+			{
+				{Text: "✏️ Редактировать", CallbackData: fmt.Sprintf("edit_subject:%d", subjectID)},
+			},
+			{
+				{Text: "🗑 Удалить предмет", CallbackData: fmt.Sprintf("delete_subject:%d", subjectID)},
+			},
+			{
+				{Text: "⬅️ Назад к списку", CallbackData: "back_to_subjects"},
 			},
 		},
 	}
 
-	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+	h.Logger.Info("Sending view subject message",
+		zap.Int64("chat_id", msg.Chat.ID),
+		zap.Int("message_id", msg.ID))
+
+	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
 		Text:        text,
-		ParseMode:   models.ParseModeMarkdown,
+		ParseMode:   models.ParseModeHTML,
 		ReplyMarkup: keyboard,
 	})
+
+	if err != nil {
+		h.Logger.Error("Failed to edit message", zap.Error(err))
+	}
 
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
@@ -332,7 +342,7 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 	}
 
 	text := fmt.Sprintf(
-		"🛠 **Редактирование предмета**\n\n"+
+		"🛠 <b>Редактирование предмета</b>\n\n"+
 			"📚 Название: %s\n"+
 			"📝 Описание: %s\n"+
 			"💰 Цена: %.2f ₽\n"+
@@ -365,7 +375,7 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 				{Text: "📊 Изменить статус", CallbackData: fmt.Sprintf("toggle_subject:%d", subjectID)},
 			},
 			{
-				{Text: "⬅️ Назад", CallbackData: "back_to_main"},
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subjectID)},
 			},
 		},
 	}
@@ -374,7 +384,7 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
 		Text:        text,
-		ParseMode:   models.ParseModeMarkdown,
+		ParseMode:   models.ParseModeHTML,
 		ReplyMarkup: keyboard,
 	})
 
@@ -413,7 +423,7 @@ func HandleToggleSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 	// Обновляем список предметов
 	msg := common.GetMessageFromCallback(callback)
 	if msg != nil {
-		h.HandleMySchedule(ctx, b, &models.Update{
+		h.HandleMySubjects(ctx, b, &models.Update{
 			Message: &models.Message{
 				Chat: models.Chat{ID: msg.Chat.ID},
 				From: &callback.From,
@@ -456,7 +466,7 @@ func HandleDeleteSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 	}
 
 	text := fmt.Sprintf(
-		"❓ Вы уверены, что хотите удалить предмет **%s**?\n\n"+
+		"❓ Вы уверены, что хотите удалить предмет <b>%s</b>?\n\n"+
 			"Это действие удалит:\n"+
 			"• Сам предмет\n"+
 			"• Все временные слоты\n"+
@@ -471,7 +481,7 @@ func HandleDeleteSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 				{Text: "✅ Да, удалить", CallbackData: fmt.Sprintf("confirm_delete:%d", subjectID)},
 			},
 			{
-				{Text: "❌ Отмена", CallbackData: "back_to_main"},
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subjectID)},
 			},
 		},
 	}
@@ -480,7 +490,7 @@ func HandleDeleteSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
 		Text:        text,
-		ParseMode:   models.ParseModeMarkdown,
+		ParseMode:   models.ParseModeHTML,
 		ReplyMarkup: keyboard,
 	})
 
@@ -537,15 +547,154 @@ func HandleConfirmDeleteSubject(ctx context.Context, b *bot.Bot, callback *model
 		ChatID:    msg.Chat.ID,
 		MessageID: msg.ID,
 		Text: fmt.Sprintf(
-			"✅ Предмет **%s** успешно удален.\n\n"+
+			"✅ Предмет <b>%s</b> успешно удален.\n\n"+
 				"Уведомления отправлены %d студентам.",
 			subject.Name,
 			len(bookings),
 		),
-		ParseMode: models.ParseModeMarkdown,
+		ParseMode: models.ParseModeHTML,
 	})
 
 	common.AnswerCallback(ctx, b, callback.ID, "✅ Предмет удален")
+}
+
+// HandleSubjectsPage обрабатывает пагинацию списка предметов
+func HandleSubjectsPage(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	h.Logger.Info("HandleSubjectsPage called",
+		zap.String("callback_data", callback.Data),
+		zap.Int64("user_id", callback.From.ID))
+
+	page, err := common.ParseIDFromCallback(callback.Data)
+	if err != nil {
+		h.Logger.Error("Failed to parse page", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
+		return
+	}
+
+	msg := common.GetMessageFromCallback(callback)
+	if msg == nil {
+		common.AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
+		return
+	}
+
+	telegramID := callback.From.ID
+	user, err := h.UserService.GetByTelegramID(ctx, telegramID)
+	if err != nil || user == nil {
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Пользователь не найден")
+		return
+	}
+
+	// Получаем предметы учителя
+	subjects, err := h.TeacherService.GetTeacherSubjects(ctx, user.ID)
+	if err != nil {
+		h.Logger.Error("Failed to get teacher subjects", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Не удалось загрузить предметы")
+		return
+	}
+
+	// Пагинация
+	const pageSize = 10
+	pageInt := int(page)
+
+	text := fmt.Sprintf("📚 Ваши предметы (всего: %d):\n\n", len(subjects))
+	var buttons [][]models.InlineKeyboardButton
+
+	// Вычисляем индексы для текущей страницы
+	startIdx := pageInt * pageSize
+	endIdx := startIdx + pageSize
+	if endIdx > len(subjects) {
+		endIdx = len(subjects)
+	}
+
+	// Проверяем корректность страницы
+	if startIdx >= len(subjects) {
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверная страница")
+		return
+	}
+
+	// Показываем предметы текущей страницы
+	for i := startIdx; i < endIdx; i++ {
+		subject := subjects[i]
+		statusEmoji := "✅"
+		statusText := "Активен"
+
+		if !subject.IsActive {
+			statusEmoji = "⏸"
+			statusText = "Неактивен"
+		}
+
+		text += fmt.Sprintf(
+			"%d. %s %s\n"+
+				"   💰 Цена: %.2f ₽\n"+
+				"   ⏱ Длительность: %d мин\n"+
+				"   📝 %s\n"+
+				"   Статус: %s\n\n",
+			i+1,
+			statusEmoji,
+			subject.Name,
+			float64(subject.Price)/100,
+			subject.Duration,
+			subject.Description,
+			statusText,
+		)
+
+		// Кнопки для каждого предмета
+		buttons = append(buttons, []models.InlineKeyboardButton{
+			{Text: fmt.Sprintf("📝 %s", subject.Name), CallbackData: fmt.Sprintf("view_subject:%d", subject.ID)},
+			{Text: "✏️", CallbackData: fmt.Sprintf("edit_subject:%d", subject.ID)},
+			{Text: statusEmoji, CallbackData: fmt.Sprintf("toggle_subject:%d", subject.ID)},
+		})
+	}
+
+	// Добавляем подсказку
+	text += "\n💡 Совет: Создайте временные слоты через /myschedule чтобы студенты могли записываться!\n\n"
+
+	// Кнопки пагинации
+	totalPages := (len(subjects) + pageSize - 1) / pageSize
+	if totalPages > 1 {
+		var paginationButtons []models.InlineKeyboardButton
+
+		// Кнопка "Предыдущая" только если не первая страница
+		if pageInt > 0 {
+			paginationButtons = append(paginationButtons,
+				models.InlineKeyboardButton{Text: "⬅️ Предыдущая", CallbackData: fmt.Sprintf("subjects_page:%d", pageInt-1)})
+		}
+
+		// Показываем номер страницы
+		paginationButtons = append(paginationButtons,
+			models.InlineKeyboardButton{Text: fmt.Sprintf("📄 %d/%d", pageInt+1, totalPages), CallbackData: "noop"})
+
+		// Кнопка "Следующая" только если не последняя страница
+		if pageInt < totalPages-1 {
+			paginationButtons = append(paginationButtons,
+				models.InlineKeyboardButton{Text: "Следующая ➡️", CallbackData: fmt.Sprintf("subjects_page:%d", pageInt+1)})
+		}
+
+		buttons = append(buttons, paginationButtons)
+	}
+
+	// Кнопка создать новый предмет
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "➕ Создать новый предмет", CallbackData: "create_first_subject"},
+	})
+
+	// Кнопка для быстрого перехода к расписанию
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "📅 Управление расписанием", CallbackData: "view_schedule"},
+	})
+
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      msg.Chat.ID,
+		MessageID:   msg.ID,
+		Text:        text,
+		ReplyMarkup: keyboard,
+	})
+
+	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
 // notifyStudentsAboutSubjectDeletion отправляет уведомления студентам об удалении предмета

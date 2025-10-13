@@ -8,6 +8,10 @@ import (
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/student"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/teacher"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/teacher/recurring"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/teacher/schedule"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/teacher/slots"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/teacher/subjects"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
@@ -94,6 +98,11 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 		common.HandleBackToMain(ctx, b, callback, h)
 	case data == BookAnother:
 		common.HandleBookAnother(ctx, b, callback, h)
+	case strings.HasPrefix(data, "back_to_subjects"):
+		common.HandleBackToSubjects(ctx, b, callback, h)
+	case data == "noop":
+		// No operation - просто подтверждаем callback
+		common.AnswerCallback(ctx, b, callback.ID, "")
 
 	// ===== Teacher: Becoming a Teacher =====
 	case data == BecomeTeacher:
@@ -102,88 +111,191 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 		teacher.HandleBecomeTeacherCancel(ctx, b, callback, h)
 
 	// ===== Teacher: Subject Management =====
+	case strings.HasPrefix(data, "subjects_page:"):
+		subjects.HandleSubjectsPage(ctx, b, callback, h)
 	case data == CreateFirstSubject:
-		teacher.HandleCreateFirstSubject(ctx, b, callback, h)
+		subjects.HandleCreateFirstSubject(ctx, b, callback, h)
 	case data == SkipFirstSubject:
-		teacher.HandleSkipFirstSubject(ctx, b, callback, h)
+		subjects.HandleSkipFirstSubject(ctx, b, callback, h)
 	case data == CreateSubjectApprovalYes:
-		teacher.HandleCreateSubjectApprovalYes(ctx, b, callback, h)
+		subjects.HandleCreateSubjectApprovalYes(ctx, b, callback, h)
 	case data == CreateSubjectApprovalNo:
-		teacher.HandleCreateSubjectApprovalNo(ctx, b, callback, h)
+		subjects.HandleCreateSubjectApprovalNo(ctx, b, callback, h)
 	case strings.HasPrefix(data, "create_subject_set_duration:"):
-		teacher.HandleCreateSubjectSetDuration(ctx, b, callback, h)
+		subjects.HandleCreateSubjectSetDuration(ctx, b, callback, h)
 	case strings.HasPrefix(data, ViewSubject):
 		// Проверяем, является ли пользователь учителем-владельцем этого предмета
 		subjectID, err := common.ParseIDFromCallback(data)
-		if err == nil {
-			telegramID := callback.From.ID
-			user, userErr := h.UserService.GetByTelegramID(ctx, telegramID)
-			subject, subjectErr := h.TeacherService.GetSubjectByID(ctx, subjectID)
-
-			// Если это учитель-владелец предмета, показываем админский интерфейс
-			if userErr == nil && subjectErr == nil && user != nil && subject != nil && subject.TeacherID == user.ID {
-				teacher.HandleViewSubject(ctx, b, callback, h)
-			} else {
-				// Иначе показываем студенческий интерфейс
-				student.HandleViewSubjectDetails(ctx, b, callback, h)
-			}
-		} else {
+		if err != nil {
+			h.Logger.Error("Failed to parse subject ID in view_subject", zap.Error(err), zap.String("data", data))
 			common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
+			return
+		}
+
+		telegramID := callback.From.ID
+		user, userErr := h.UserService.GetByTelegramID(ctx, telegramID)
+		if userErr != nil {
+			h.Logger.Error("Failed to get user in view_subject", zap.Error(userErr), zap.Int64("telegram_id", telegramID))
+			common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Ошибка получения пользователя")
+			return
+		}
+
+		subject, subjectErr := h.TeacherService.GetSubjectByID(ctx, subjectID)
+		if subjectErr != nil {
+			h.Logger.Error("Failed to get subject in view_subject", zap.Error(subjectErr), zap.Int64("subject_id", subjectID))
+			common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Предмет не найден")
+			return
+		}
+
+		// Если это учитель-владелец предмета, показываем админский интерфейс
+		if user != nil && subject != nil && user.IsTeacher && subject.TeacherID == user.ID {
+			h.Logger.Info("Showing teacher interface for subject",
+				zap.Int64("user_id", user.ID),
+				zap.Int64("subject_id", subjectID))
+			subjects.HandleViewSubject(ctx, b, callback, h)
+		} else {
+			// Иначе показываем студенческий интерфейс
+			h.Logger.Info("Showing student interface for subject",
+				zap.Int64("user_id", user.ID),
+				zap.Int64("subject_id", subjectID))
+			student.HandleViewSubjectDetails(ctx, b, callback, h)
 		}
 	case strings.HasPrefix(data, EditSubject):
-		teacher.HandleEditSubject(ctx, b, callback, h)
+		subjects.HandleEditSubject(ctx, b, callback, h)
 	case strings.HasPrefix(data, EditFieldName):
-		teacher.HandleEditFieldName(ctx, b, callback, h)
+		subjects.HandleEditFieldName(ctx, b, callback, h)
 	case strings.HasPrefix(data, EditFieldDesc):
-		teacher.HandleEditFieldDesc(ctx, b, callback, h)
+		subjects.HandleEditFieldDesc(ctx, b, callback, h)
 	case strings.HasPrefix(data, EditFieldPrice):
-		teacher.HandleEditFieldPrice(ctx, b, callback, h)
+		subjects.HandleEditFieldPrice(ctx, b, callback, h)
 	case strings.HasPrefix(data, EditFieldDuration):
-		teacher.HandleEditFieldDuration(ctx, b, callback, h)
+		subjects.HandleEditFieldDuration(ctx, b, callback, h)
 	case strings.HasPrefix(data, ToggleApproval):
-		teacher.HandleToggleApproval(ctx, b, callback, h)
+		subjects.HandleToggleApproval(ctx, b, callback, h)
 	case strings.HasPrefix(data, SetDuration):
-		teacher.HandleSetDuration(ctx, b, callback, h)
+		subjects.HandleSetDuration(ctx, b, callback, h)
 	case strings.HasPrefix(data, EditDurationCustom):
-		teacher.HandleEditDurationCustom(ctx, b, callback, h)
+		subjects.HandleEditDurationCustom(ctx, b, callback, h)
 	case strings.HasPrefix(data, ToggleSubject):
-		teacher.HandleToggleSubject(ctx, b, callback, h)
+		subjects.HandleToggleSubject(ctx, b, callback, h)
 	case strings.HasPrefix(data, DeleteSubject):
-		teacher.HandleDeleteSubject(ctx, b, callback, h)
+		subjects.HandleDeleteSubject(ctx, b, callback, h)
 	case strings.HasPrefix(data, ConfirmDelete):
-		teacher.HandleConfirmDeleteSubject(ctx, b, callback, h)
+		subjects.HandleConfirmDeleteSubject(ctx, b, callback, h)
 
 	// ===== Teacher: Schedule Management =====
 	case data == ViewSchedule:
-		teacher.HandleViewSchedule(ctx, b, callback, h)
+		schedule.HandleViewSchedule(ctx, b, callback, h)
+	case strings.HasPrefix(data, "subject_schedule:"):
+		schedule.HandleViewSubjectSchedule(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_schedule_calendar:"):
+		schedule.HandleViewScheduleCalendar(ctx, b, callback, h)
+	case strings.HasPrefix(data, "schedule_calendar_page:"):
+		schedule.HandleViewScheduleCalendarPage(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_schedule_day:"):
+		schedule.HandleViewScheduleDay(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_schedule_weeks:"):
+		schedule.HandleViewScheduleWeeks(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_schedule_week_day:"):
+		schedule.HandleViewScheduleWeekDay(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_slot_details:"):
+		schedule.HandleViewSlotDetails(ctx, b, callback, h)
+	case strings.HasPrefix(data, "cancel_slot:"):
+		schedule.HandleCancelSlot(ctx, b, callback, h)
+	case strings.HasPrefix(data, "restore_slot:"):
+		schedule.HandleRestoreSlot(ctx, b, callback, h)
+	case strings.HasPrefix(data, "cancel_booking_from_slot:"):
+		schedule.HandleCancelBookingFromSlot(ctx, b, callback, h)
+	case strings.HasPrefix(data, "manage_temporary:"):
+		schedule.HandleManageTemporary(ctx, b, callback, h)
+	case data == "back_to_myschedule":
+		common.HandleBackToMySchedule(ctx, b, callback, h)
+	case strings.HasPrefix(data, "manage_recurring:"):
+		recurring.HandleManageRecurring(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_recurring_group:"):
+		recurring.HandleViewRecurringGroup(ctx, b, callback, h)
+	case strings.HasPrefix(data, "delete_recurring_group:"):
+		recurring.HandleDeleteRecurringGroup(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_all_slots:"):
+		schedule.HandleViewAllSlots(ctx, b, callback, h)
+	case strings.HasPrefix(data, "toggle_recurring:"):
+		recurring.HandleToggleRecurring(ctx, b, callback, h)
+	case strings.HasPrefix(data, "edit_recurring_menu:"):
+		recurring.HandleEditRecurringMenu(ctx, b, callback, h)
+	case strings.HasPrefix(data, "edit_recurring_days:"):
+		recurring.HandleEditRecurringDays(ctx, b, callback, h)
+	case strings.HasPrefix(data, "toggle_edit_weekday:"):
+		recurring.HandleToggleEditWeekday(ctx, b, callback, h)
+	case strings.HasPrefix(data, "save_recurring_days:"):
+		recurring.HandleSaveRecurringDays(ctx, b, callback, h)
+	case strings.HasPrefix(data, "edit_recurring_time:"):
+		recurring.HandleEditRecurringTime(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_edit_time_mode:"):
+		recurring.HandleRecurringEditTimeMode(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_edit_interval_start:"):
+		recurring.HandleRecurringEditIntervalStart(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_edit_interval_end:"):
+		recurring.HandleRecurringEditIntervalEnd(ctx, b, callback, h)
+	case strings.HasPrefix(data, "create_recurring_start:"):
+		recurring.HandleCreateRecurringStart(ctx, b, callback, h)
+	case strings.HasPrefix(data, "toggle_create_weekday:"):
+		recurring.HandleToggleCreateWeekday(ctx, b, callback, h)
+	case strings.HasPrefix(data, "create_recurring_continue:"):
+		recurring.HandleCreateRecurringContinue(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_time_mode:"):
+		recurring.HandleRecurringTimeMode(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_interval_start:"):
+		recurring.HandleRecurringIntervalStart(ctx, b, callback, h)
+	case strings.HasPrefix(data, "recurring_interval_end:"):
+		recurring.HandleRecurringIntervalEnd(ctx, b, callback, h)
+	case strings.HasPrefix(data, "toggle_time_slot:"):
+		recurring.HandleToggleTimeSlot(ctx, b, callback, h)
+	case strings.HasPrefix(data, "create_recurring_specific_confirm:"):
+		recurring.HandleCreateRecurringSpecificConfirm(ctx, b, callback, h)
 	case data == AddSlots:
-		teacher.HandleAddSlots(ctx, b, callback, h)
+		schedule.HandleAddSlots(ctx, b, callback, h)
 	case strings.HasPrefix(data, CreateSlots):
-		teacher.HandleCreateSlotsStart(ctx, b, callback, h)
+		slots.HandleCreateSlotsStart(ctx, b, callback, h)
 	case strings.HasPrefix(data, "slot_mode:"):
-		teacher.HandleSlotMode(ctx, b, callback, h)
-	case strings.HasPrefix(data, "single_day:"):
-		teacher.HandleSingleDay(ctx, b, callback, h)
-	case strings.HasPrefix(data, "single_time:"):
-		teacher.HandleSingleDayTime(ctx, b, callback, h)
+		slots.HandleSlotMode(ctx, b, callback, h)
+	case strings.HasPrefix(data, "single_day_page:"):
+		slots.HandleSingleDayPage(ctx, b, callback, h)
+	case strings.HasPrefix(data, "single_day_date:"):
+		slots.HandleSingleDayDate(ctx, b, callback, h)
+	case strings.HasPrefix(data, "single_time_auto:"):
+		slots.HandleSingleTimeAuto(ctx, b, callback, h)
+	case strings.HasPrefix(data, "custom_time:"):
+		slots.HandleCustomTime(ctx, b, callback, h)
+	case strings.HasPrefix(data, "custom_period:"):
+		slots.HandleCustomPeriod(ctx, b, callback, h)
 	case strings.HasPrefix(data, "period_weeks:"):
-		teacher.HandlePeriodWeeks(ctx, b, callback, h)
+		slots.HandlePeriodWeeks(ctx, b, callback, h)
 	case strings.HasPrefix(data, "period_weekday:"):
-		teacher.HandlePeriodWeekday(ctx, b, callback, h)
+		slots.HandlePeriodWeekday(ctx, b, callback, h)
 	case strings.HasPrefix(data, "period_time:"):
-		teacher.HandlePeriodTime(ctx, b, callback, h)
+		slots.HandlePeriodTime(ctx, b, callback, h)
 	case strings.HasPrefix(data, "workday_day:"):
-		teacher.HandleWorkdayDay(ctx, b, callback, h)
+		slots.HandleWorkdayDay(ctx, b, callback, h)
+	case strings.HasPrefix(data, "workday_start:"):
+		slots.HandleWorkdayStart(ctx, b, callback, h)
+	case strings.HasPrefix(data, "workday_end:"):
+		slots.HandleWorkdayEnd(ctx, b, callback, h)
 	case strings.HasPrefix(data, SetWeekday):
-		teacher.HandleSetWeekday(ctx, b, callback, h)
+		slots.HandleSetWeekday(ctx, b, callback, h)
 	case strings.HasPrefix(data, SetTime):
-		teacher.HandleSetTime(ctx, b, callback, h)
+		slots.HandleSetTime(ctx, b, callback, h)
 	case data == ManualBook:
-		teacher.HandleManualBook(ctx, b, callback, h)
+		slots.HandleManualBook(ctx, b, callback, h)
 
 	// ===== Student: Booking Lessons =====
 	case strings.HasPrefix(data, ViewScheduleSubject):
 		student.HandleViewScheduleSubject(ctx, b, callback, h)
+	case strings.HasPrefix(data, "view_extended_slots:"):
+		student.HandleViewExtendedSlots(ctx, b, callback, h)
+	case strings.HasPrefix(data, "request_recurring_booking:"):
+		student.HandleRequestRecurringBooking(ctx, b, callback, h)
+	case strings.HasPrefix(data, "request_recurring_confirm:"):
+		student.HandleRequestRecurringConfirm(ctx, b, callback, h)
 	case strings.HasPrefix(data, BookLesson):
 		student.HandleBookLesson(ctx, b, callback, h)
 	case strings.HasPrefix(data, CancelBooking):
@@ -200,6 +312,10 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 		student.HandleApproveCancel(ctx, b, callback, h)
 	case strings.HasPrefix(data, RejectCancel):
 		student.HandleRejectCancel(ctx, b, callback, h)
+	case strings.HasPrefix(data, "approve_recurring:"):
+		recurring.HandleApproveRecurring(ctx, b, callback, h)
+	case strings.HasPrefix(data, "reject_recurring:"):
+		recurring.HandleRejectRecurring(ctx, b, callback, h)
 
 	// ===== Unknown Callback =====
 	default:

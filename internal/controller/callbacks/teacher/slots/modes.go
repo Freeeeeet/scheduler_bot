@@ -1,4 +1,4 @@
-package teacher
+package slots
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common/formatting"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
@@ -106,28 +107,91 @@ func showRecurringScheduleSelection(ctx context.Context, b *bot.Bot, callback *m
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
-// showSingleDaySelection показывает опции для создания слота на один день
+// showSingleDaySelection показывает опции для создания слота на один день (7 дней с днями недели)
 func showSingleDaySelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, subjectID int64) {
-	// Пока упрощенный вариант - тоже через день недели, но только 1 слот
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "Сегодня", CallbackData: fmt.Sprintf("single_day:%d:today", subjectID)},
-				{Text: "Завтра", CallbackData: fmt.Sprintf("single_day:%d:tomorrow", subjectID)},
-			},
-			{
-				{Text: "Послезавтра", CallbackData: fmt.Sprintf("single_day:%d:dayafter", subjectID)},
-			},
-			{
-				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
-			},
-		},
+	showSingleDaySelectionWithOffset(ctx, b, callback, h, msg, subjectID, 0)
+}
+
+// showSingleDaySelectionWithOffset показывает выбор дня со смещением (для пагинации)
+func showSingleDaySelectionWithOffset(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, subjectID int64, offset int) {
+	now := time.Now()
+
+	weekdayShortNames := map[time.Weekday]string{
+		time.Sunday:    "Вс",
+		time.Monday:    "Пн",
+		time.Tuesday:   "Вт",
+		time.Wednesday: "Ср",
+		time.Thursday:  "Чт",
+		time.Friday:    "Пт",
+		time.Saturday:  "Сб",
 	}
+
+	var buttons [][]models.InlineKeyboardButton
+
+	// Генерируем кнопки для 7 дней начиная с offset
+	for i := 0; i < 7; i++ {
+		dayOffset := offset + i
+		date := now.AddDate(0, 0, dayOffset)
+		dateStr := date.Format("2006-01-02")
+		weekdayShort := weekdayShortNames[date.Weekday()]
+		displayText := fmt.Sprintf("%s, %s", weekdayShort, date.Format("02.01"))
+
+		// Добавляем специальные метки для сегодня и завтра (только на первой странице)
+		if offset == 0 && i == 0 {
+			displayText = "Сегодня • " + displayText
+		} else if offset == 0 && i == 1 {
+			displayText = "Завтра • " + displayText
+		}
+
+		buttons = append(buttons, []models.InlineKeyboardButton{
+			{Text: displayText, CallbackData: fmt.Sprintf("single_day_date:%d:%s", subjectID, dateStr)},
+		})
+	}
+
+	// Кнопки навигации (вперед/назад)
+	var navButtons []models.InlineKeyboardButton
+
+	// Кнопка "назад" только если не на первой странице
+	if offset > 0 {
+		prevOffset := offset - 7
+		if prevOffset < 0 {
+			prevOffset = 0
+		}
+		navButtons = append(navButtons, models.InlineKeyboardButton{
+			Text:         "⬅️ Пред. неделя",
+			CallbackData: fmt.Sprintf("single_day_page:%d:%d", subjectID, prevOffset),
+		})
+	}
+
+	// Кнопка "вперед" (показываем до 12 недель вперед)
+	if offset < 84 {
+		nextOffset := offset + 7
+		navButtons = append(navButtons, models.InlineKeyboardButton{
+			Text:         "След. неделя ➡️",
+			CallbackData: fmt.Sprintf("single_day_page:%d:%d", subjectID, nextOffset),
+		})
+	}
+
+	if len(navButtons) > 0 {
+		buttons = append(buttons, navButtons)
+	}
+
+	// Кнопка "Назад к выбору режима"
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "🔙 К выбору режима", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
+	})
+
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	weekNum := (offset / 7) + 1
+	text := fmt.Sprintf("📆 Создание слота на один день\n\n📍 Неделя %d\nВыберите день:", weekNum)
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
-		Text:        "📆 Создание слота на один день\n\nВыберите день:",
+		Text:        text,
 		ReplyMarkup: keyboard,
 	})
 
@@ -147,6 +211,10 @@ func showPeriodSelection(ctx context.Context, b *bot.Bot, callback *models.Callb
 				{Text: "8 недель", CallbackData: fmt.Sprintf("period_weeks:%d:8", subjectID)},
 			},
 			{
+				{Text: "12 недель", CallbackData: fmt.Sprintf("period_weeks:%d:12", subjectID)},
+				{Text: "⌨️ Свой период", CallbackData: fmt.Sprintf("custom_period:%d", subjectID)},
+			},
+			{
 				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
 			},
 		},
@@ -162,13 +230,13 @@ func showPeriodSelection(ctx context.Context, b *bot.Bot, callback *models.Callb
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
-// HandleSingleDay обрабатывает создание одного слота на конкретный день
-func HandleSingleDay(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
-	h.Logger.Info("HandleSingleDay called",
+// HandleSingleDayPage обрабатывает переключение страниц при выборе дня
+func HandleSingleDayPage(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	h.Logger.Info("HandleSingleDayPage called",
 		zap.String("callback_data", callback.Data),
 		zap.Int64("user_id", callback.From.ID))
 
-	// Формат: single_day:123:today
+	// Формат: single_day_page:123:7 (subjectID:offset)
 	parts := strings.Split(callback.Data, ":")
 	if len(parts) != 3 {
 		h.Logger.Error("Invalid callback format", zap.String("data", callback.Data))
@@ -183,7 +251,12 @@ func HandleSingleDay(ctx context.Context, b *bot.Bot, callback *models.CallbackQ
 		return
 	}
 
-	dayOption := parts[2]
+	offset, err := strconv.Atoi(parts[2])
+	if err != nil {
+		h.Logger.Error("Failed to parse offset", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверное смещение")
+		return
+	}
 
 	msg := common.GetMessageFromCallback(callback)
 	if msg == nil {
@@ -192,70 +265,105 @@ func HandleSingleDay(ctx context.Context, b *bot.Bot, callback *models.CallbackQ
 		return
 	}
 
-	// Вычисляем дату
-	now := time.Now()
-	var targetDate time.Time
+	showSingleDaySelectionWithOffset(ctx, b, callback, h, msg, subjectID, offset)
+}
 
-	switch dayOption {
-	case "today":
-		targetDate = now
-	case "tomorrow":
-		targetDate = now.AddDate(0, 0, 1)
-	case "dayafter":
-		targetDate = now.AddDate(0, 0, 2)
-	default:
-		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверная опция")
+// HandleSingleDayDate обрабатывает выбор конкретной даты для слота
+func HandleSingleDayDate(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	h.Logger.Info("HandleSingleDayDate called",
+		zap.String("callback_data", callback.Data),
+		zap.Int64("user_id", callback.From.ID))
+
+	// Формат: single_day_date:123:2024-01-15
+	parts := strings.Split(callback.Data, ":")
+	if len(parts) != 3 {
+		h.Logger.Error("Invalid callback format", zap.String("data", callback.Data))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
 		return
 	}
 
-	dateStr := targetDate.Format("2006-01-02")
-	weekdayNames := map[time.Weekday]string{
-		time.Sunday:    "воскресенье",
-		time.Monday:    "понедельник",
-		time.Tuesday:   "вторник",
-		time.Wednesday: "среду",
-		time.Thursday:  "четверг",
-		time.Friday:    "пятницу",
-		time.Saturday:  "субботу",
+	subjectID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Failed to parse subject ID", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID")
+		return
 	}
 
-	// Показываем выбор времени
+	dateStr := parts[2]
+	targetDate, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		h.Logger.Error("Failed to parse date", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверная дата")
+		return
+	}
+
+	msg := common.GetMessageFromCallback(callback)
+	if msg == nil {
+		h.Logger.Error("Failed to get message from callback")
+		common.AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
+		return
+	}
+
+	// Получаем предмет для определения длительности
+	subject, err := h.TeacherService.GetSubjectByID(ctx, subjectID)
+	if err != nil || subject == nil {
+		h.Logger.Error("Failed to get subject", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Предмет не найден")
+		return
+	}
+
+
+	// Генерируем временные слоты на основе длительности занятия
+	var buttons [][]models.InlineKeyboardButton
+	duration := subject.Duration // в минутах
+
+	// Генерируем слоты с 00:00 до 23:59 с шагом в длительность занятия
+	currentTime := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 0, 0, 0, 0, targetDate.Location())
+	endOfDay := time.Date(targetDate.Year(), targetDate.Month(), targetDate.Day(), 23, 59, 0, 0, targetDate.Location())
+
+	var row []models.InlineKeyboardButton
+	for currentTime.Before(endOfDay) {
+		timeStr := currentTime.Format("15:04")
+		row = append(row, models.InlineKeyboardButton{
+			Text:         timeStr,
+			CallbackData: fmt.Sprintf("single_time_auto:%d:%s:%s", subjectID, dateStr, timeStr),
+		})
+
+		// По 3 кнопки в ряд для компактности
+		if len(row) == 3 {
+			buttons = append(buttons, row)
+			row = []models.InlineKeyboardButton{}
+		}
+
+		currentTime = currentTime.Add(time.Duration(duration) * time.Minute)
+	}
+
+	// Добавляем оставшиеся кнопки
+	if len(row) > 0 {
+		buttons = append(buttons, row)
+	}
+
+	// Кнопка для ввода своего времени
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⌨️ Ввести своё время", CallbackData: fmt.Sprintf("custom_time:%d:%s", subjectID, dateStr)},
+	})
+
+	// Кнопка "Назад"
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("slot_mode:%d:single", subjectID)},
+	})
+
 	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "08:00", CallbackData: fmt.Sprintf("single_time:%d:%s:8", subjectID, dateStr)},
-				{Text: "09:00", CallbackData: fmt.Sprintf("single_time:%d:%s:9", subjectID, dateStr)},
-				{Text: "10:00", CallbackData: fmt.Sprintf("single_time:%d:%s:10", subjectID, dateStr)},
-			},
-			{
-				{Text: "11:00", CallbackData: fmt.Sprintf("single_time:%d:%s:11", subjectID, dateStr)},
-				{Text: "12:00", CallbackData: fmt.Sprintf("single_time:%d:%s:12", subjectID, dateStr)},
-				{Text: "13:00", CallbackData: fmt.Sprintf("single_time:%d:%s:13", subjectID, dateStr)},
-			},
-			{
-				{Text: "14:00", CallbackData: fmt.Sprintf("single_time:%d:%s:14", subjectID, dateStr)},
-				{Text: "15:00", CallbackData: fmt.Sprintf("single_time:%d:%s:15", subjectID, dateStr)},
-				{Text: "16:00", CallbackData: fmt.Sprintf("single_time:%d:%s:16", subjectID, dateStr)},
-			},
-			{
-				{Text: "17:00", CallbackData: fmt.Sprintf("single_time:%d:%s:17", subjectID, dateStr)},
-				{Text: "18:00", CallbackData: fmt.Sprintf("single_time:%d:%s:18", subjectID, dateStr)},
-				{Text: "19:00", CallbackData: fmt.Sprintf("single_time:%d:%s:19", subjectID, dateStr)},
-			},
-			{
-				{Text: "20:00", CallbackData: fmt.Sprintf("single_time:%d:%s:20", subjectID, dateStr)},
-			},
-			{
-				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
-			},
-		},
+		InlineKeyboard: buttons,
 	}
 
-	text := fmt.Sprintf("📆 Создание слота на один день\n\n"+
-		"Выбран день: %s, %s\n\n"+
+	text := fmt.Sprintf("📆 Создание слота на %s, %s\n\n"+
+		"⏱ Длительность: %d мин\n\n"+
+		"Временные слоты рассчитаны автоматически на основе длительности.\n"+
 		"Выберите время начала занятия:",
 		targetDate.Format("02.01.2006"),
-		weekdayNames[targetDate.Weekday()])
+		formatting.GetWeekdayName(int(targetDate.Weekday())),
+		duration)
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
@@ -425,15 +533,6 @@ func HandlePeriodWeekday(ctx context.Context, b *bot.Bot, callback *models.Callb
 		return
 	}
 
-	weekdayNames := map[int]string{
-		0: "Воскресенье",
-		1: "Понедельник",
-		2: "Вторник",
-		3: "Среда",
-		4: "Четверг",
-		5: "Пятница",
-		6: "Суббота",
-	}
 
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
@@ -461,7 +560,7 @@ func HandlePeriodWeekday(ctx context.Context, b *bot.Bot, callback *models.Callb
 				{Text: "20:00", CallbackData: fmt.Sprintf("period_time:%d:%d:20", subjectID, weekdayNum)},
 			},
 			{
-				{Text: "❌ Отмена", CallbackData: "back_to_main"},
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("create_slots:%d", subjectID)},
 			},
 		},
 	}
@@ -475,7 +574,7 @@ func HandlePeriodWeekday(ctx context.Context, b *bot.Bot, callback *models.Callb
 	text := fmt.Sprintf("📅 Создание слотов на %d %s\n\n"+
 		"День недели: %s\n\n"+
 		"Выберите время начала занятия:",
-		weeks, getWeeksWord(weeks), weekdayNames[weekdayNum])
+		weeks, getWeeksWord(weeks), formatting.GetWeekdayName(int(weekdayNum)))
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,

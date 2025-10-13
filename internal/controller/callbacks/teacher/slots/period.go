@@ -1,4 +1,4 @@
-package teacher
+package slots
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common/formatting"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
@@ -134,23 +135,6 @@ func HandlePeriodTime(ctx context.Context, b *bot.Bot, callback *models.Callback
 	// Очищаем state
 	h.StateManager.ClearState(telegramID)
 
-	weekdayNames := map[int]string{
-		0: "Воскресенье",
-		1: "Понедельник",
-		2: "Вторник",
-		3: "Среда",
-		4: "Четверг",
-		5: "Пятница",
-		6: "Суббота",
-	}
-
-	weeksWord := "недель"
-	if weeks == 1 {
-		weeksWord = "неделю"
-	} else if weeks >= 2 && weeks <= 4 {
-		weeksWord = "недели"
-	}
-
 	text := fmt.Sprintf("✅ Слоты успешно созданы!\n\n"+
 		"📚 Предмет: %s\n"+
 		"📅 День: %s\n"+
@@ -160,11 +144,11 @@ func HandlePeriodTime(ctx context.Context, b *bot.Bot, callback *models.Callback
 		"Создано %d %s\n\n"+
 		"Посмотреть расписание: /myschedule",
 		subject.Name,
-		weekdayNames[weekdayNum],
+		formatting.GetWeekdayName(weekdayNum),
 		hour,
 		subject.Duration,
-		weeks, weeksWord,
-		count, getSlotsWord(count))
+		weeks, formatting.PluralizeWeeks(weeks),
+		count, formatting.PluralizeSlots(count))
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:    msg.Chat.ID,
@@ -175,12 +159,53 @@ func HandlePeriodTime(ctx context.Context, b *bot.Bot, callback *models.Callback
 	common.AnswerCallbackAlert(ctx, b, callback.ID, "✅ Слоты созданы!")
 }
 
-func getSlotsWord(count int) string {
-	if count%10 == 1 && count%100 != 11 {
-		return "слот"
+// HandleCustomPeriod начинает процесс ввода пользовательского периода
+func HandleCustomPeriod(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
+	h.Logger.Info("HandleCustomPeriod called",
+		zap.String("callback_data", callback.Data),
+		zap.Int64("user_id", callback.From.ID))
+
+	subjectID, err := common.ParseIDFromCallback(callback.Data)
+	if err != nil {
+		h.Logger.Error("Failed to parse subject ID", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
+		return
 	}
-	if count%10 >= 2 && count%10 <= 4 && (count%100 < 10 || count%100 >= 20) {
-		return "слота"
+
+	msg := common.GetMessageFromCallback(callback)
+	if msg == nil {
+		h.Logger.Error("Failed to get message from callback")
+		common.AnswerCallback(ctx, b, callback.ID, "❌ Ошибка")
+		return
 	}
-	return "слотов"
+
+	telegramID := callback.From.ID
+
+	// Устанавливаем состояние для ожидания ввода периода
+	h.StateManager.SetState(telegramID, "custom_period_input")
+	h.StateManager.SetData(telegramID, "subject_id", subjectID)
+
+	text := "⌨️ <b>Ввод периода вручную</b>\n\n" +
+		"Введите количество недель (от 1 до 24):\n\n" +
+		"Примеры:\n" +
+		"• 3 (для 3 недель)\n" +
+		"• 10 (для 10 недель)\n" +
+		"• 16 (для 16 недель)\n\n" +
+		"Отправьте /cancel для отмены."
+
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("slot_mode:%d:period", subjectID)}},
+		},
+	}
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      msg.Chat.ID,
+		MessageID:   msg.ID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: keyboard,
+	})
+
+	common.AnswerCallback(ctx, b, callback.ID, "")
 }
