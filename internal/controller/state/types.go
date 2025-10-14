@@ -24,6 +24,15 @@ const (
 	StateAddSlotsWeekday   UserState = "add_slots_weekday"
 	StateAddSlotsTime      UserState = "add_slots_time"
 	StateAddSlotsDuration  UserState = "add_slots_duration"
+
+	// Состояния для студентов - доступ
+	StateEnteringInviteCode    UserState = "entering_invite_code"
+	StateEnteringAccessMessage UserState = "entering_access_message"
+	StateSearchingTeacher      UserState = "searching_teacher"
+
+	// Состояния для учителей - управление доступом
+	StateCreatingInviteCode  UserState = "creating_invite_code"
+	StateRespondingToRequest UserState = "responding_to_request"
 )
 
 // UserData хранит временные данные пользователя во время диалога

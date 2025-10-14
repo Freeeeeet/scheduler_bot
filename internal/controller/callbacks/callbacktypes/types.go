@@ -3,6 +3,7 @@ package callbacktypes
 import (
 	"context"
 
+	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/Freeeeeet/scheduler_bot/internal/service"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -27,8 +28,25 @@ type Handler struct {
 	UserService    *service.UserService
 	BookingService *service.BookingService
 	TeacherService *service.TeacherService
+	AccessService  *service.StudentAccessService
 	StateManager   StateManager
 	Logger         *zap.Logger
+
+	// Репозитории (для прямого доступа в некоторых handlers)
+	UserRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.User, error)
+		UpdatePublicStatus(ctx context.Context, userID int64, isPublic bool) error
+	}
+	InviteCodeRepo interface {
+		GetByCode(ctx context.Context, code string) (*model.TeacherInviteCode, error)
+		CountActiveCodesByTeacher(ctx context.Context, teacherID int64) (int, error)
+	}
+	AccessRepo interface {
+		GetAccessInfo(ctx context.Context, studentID, teacherID int64) (*model.StudentTeacherAccess, error)
+	}
+	AccessRequestRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.AccessRequest, error)
+	}
 
 	// Функции-хэндлеры из основного контроллера
 	HandleSubjects   func(ctx context.Context, b *bot.Bot, update *models.Update)

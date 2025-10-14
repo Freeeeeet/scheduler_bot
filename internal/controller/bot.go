@@ -6,6 +6,7 @@ import (
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/handlers"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/state"
+	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/Freeeeeet/scheduler_bot/internal/service"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -24,6 +25,21 @@ func NewBotController(
 	userService *service.UserService,
 	bookingService *service.BookingService,
 	teacherService *service.TeacherService,
+	accessService *service.StudentAccessService,
+	userRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.User, error)
+		UpdatePublicStatus(ctx context.Context, userID int64, isPublic bool) error
+	},
+	inviteCodeRepo interface {
+		GetByCode(ctx context.Context, code string) (*model.TeacherInviteCode, error)
+		CountActiveCodesByTeacher(ctx context.Context, teacherID int64) (int, error)
+	},
+	accessRepo interface {
+		GetAccessInfo(ctx context.Context, studentID, teacherID int64) (*model.StudentTeacherAccess, error)
+	},
+	accessRequestRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.AccessRequest, error)
+	},
 	logger *zap.Logger,
 ) *BotController {
 	// Создаём менеджер состояний
@@ -46,6 +62,11 @@ func NewBotController(
 		userService,
 		bookingService,
 		teacherService,
+		accessService,
+		userRepo,
+		inviteCodeRepo,
+		accessRepo,
+		accessRequestRepo,
 		stateAdapter,
 		logger,
 		cmdHandlers.HandleSubjects,

@@ -300,7 +300,7 @@ func (r *RecurringScheduleRepository) GetSchedulesNeedingSlots(ctx context.Conte
 }
 
 // GetByGroupID получает все recurring schedules по group_id
-func (r *RecurringScheduleRepository) GetByGroupID(ctx context.Context, groupID string) ([]*model.RecurringSchedule, error) {
+func (r *RecurringScheduleRepository) GetByGroupID(ctx context.Context, groupID int64) ([]*model.RecurringSchedule, error) {
 	query := `
 		SELECT id, group_id, teacher_id, subject_id, weekday, start_hour, start_minute, duration_minutes, is_active, created_at, updated_at
 		FROM recurring_schedules
@@ -340,7 +340,7 @@ func (r *RecurringScheduleRepository) GetByGroupID(ctx context.Context, groupID 
 }
 
 // DeactivateByGroupID деактивирует все recurring schedules в группе
-func (r *RecurringScheduleRepository) DeactivateByGroupID(ctx context.Context, groupID string) error {
+func (r *RecurringScheduleRepository) DeactivateByGroupID(ctx context.Context, groupID int64) error {
 	query := `UPDATE recurring_schedules SET is_active = false WHERE group_id = $1`
 
 	_, err := r.pool.Exec(ctx, query, groupID)
@@ -352,7 +352,7 @@ func (r *RecurringScheduleRepository) DeactivateByGroupID(ctx context.Context, g
 }
 
 // DeleteByGroupID удаляет все recurring schedules в группе
-func (r *RecurringScheduleRepository) DeleteByGroupID(ctx context.Context, groupID string) error {
+func (r *RecurringScheduleRepository) DeleteByGroupID(ctx context.Context, groupID int64) error {
 	query := `DELETE FROM recurring_schedules WHERE group_id = $1`
 
 	_, err := r.pool.Exec(ctx, query, groupID)
@@ -361,4 +361,17 @@ func (r *RecurringScheduleRepository) DeleteByGroupID(ctx context.Context, group
 	}
 
 	return nil
+}
+
+// GetNextGroupID возвращает следующий доступный group_id
+func (r *RecurringScheduleRepository) GetNextGroupID(ctx context.Context) (int64, error) {
+	query := `SELECT COALESCE(MAX(group_id), 0) + 1 FROM recurring_schedules`
+
+	var nextID int64
+	err := r.pool.QueryRow(ctx, query).Scan(&nextID)
+	if err != nil {
+		return 0, fmt.Errorf("get next group_id: %w", err)
+	}
+
+	return nextID, nil
 }

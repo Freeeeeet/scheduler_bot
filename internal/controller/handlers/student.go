@@ -20,69 +20,25 @@ func (h *Handlers) HandleSubjects(ctx context.Context, b *bot.Bot, update *model
 	h.logger.Info("HandleSubjects called",
 		zap.Int64("user_id", update.Message.From.ID))
 
-	// Получаем все активные предметы
-	subjects, err := h.teacherService.GetAllActiveSubjects(ctx)
-	if err != nil {
-		h.logger.Error("Failed to get subjects", zap.Error(err))
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
-			Text:   "❌ Не удалось загрузить список предметов.",
-		})
-		return
-	}
+	text := "📚 *Предметы и учителя*\n\n" +
+		"Выберите категорию:\n\n" +
+		"🎓 *Мои учителя* - учителя, к которым у вас есть доступ\n" +
+		"🌍 *Публичные учителя* - доступны всем студентам\n" +
+		"🔍 *Найти учителя* - по коду приглашения или заявке\n" +
+		"📋 *Мои заявки* - статус ваших запросов на доступ"
 
-	h.logger.Info("Retrieved active subjects", zap.Int("count", len(subjects)))
-
-	if len(subjects) == 0 {
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
-			Text:   "📚 Пока нет доступных предметов.\n\nСтаньте первым учителем: /becometeacher",
-		})
-		return
-	}
-
-	text := "📚 Доступные предметы:\n\n"
-	var buttons [][]models.InlineKeyboardButton
-	hasApprovalRequired := false
-
-	for i, subject := range subjects {
-		approvalText := ""
-		if subject.RequiresBookingApproval {
-			approvalText = " ⏳"
-			hasApprovalRequired = true
-		}
-
-		text += fmt.Sprintf(
-			"%d. %s%s\n"+
-				"   💰 Цена: %s\n"+
-				"   ⏱ Длительность: %d мин\n"+
-				"   📝 %s\n\n",
-			i+1,
-			subject.Name,
-			approvalText,
-			FormatPrice(subject.Price),
-			subject.Duration,
-			subject.Description,
-		)
-
-		// Добавляем кнопку для просмотра деталей
-		buttons = append(buttons, []models.InlineKeyboardButton{
-			{Text: fmt.Sprintf("📖 %s", subject.Name), CallbackData: fmt.Sprintf("view_subject:%d", subject.ID)},
-		})
-	}
-
-	if hasApprovalRequired {
-		text += "\n⏳ - требуется одобрение учителя"
-	}
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: buttons,
+	buttons := [][]models.InlineKeyboardButton{
+		{{Text: "🎓 Мои учителя", CallbackData: "my_teachers"}},
+		{{Text: "🌍 Публичные учителя", CallbackData: "public_teachers"}},
+		{{Text: "🔍 Найти учителя", CallbackData: "find_teacher"}},
+		{{Text: "📋 Мои заявки", CallbackData: "my_requests"}},
 	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      update.Message.Chat.ID,
 		Text:        text,
-		ReplyMarkup: keyboard,
+		ParseMode:   models.ParseModeMarkdown,
+		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: buttons},
 	})
 }
 

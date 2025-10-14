@@ -7,7 +7,6 @@ import (
 
 	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/Freeeeeet/scheduler_bot/internal/repository"
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -113,9 +112,20 @@ func (s *TeacherService) GetTeacherSubjects(ctx context.Context, teacherID int64
 	return s.subjectRepo.GetByTeacherID(ctx, teacherID)
 }
 
-// GetAllActiveSubjects получает все активные предметы
+// GetAllActiveSubjects получает все активные предметы (устарело, используйте GetPublicSubjects или GetSubjectsByTeachers)
+// Deprecated: Use GetPublicSubjects or GetSubjectsByTeachers instead
 func (s *TeacherService) GetAllActiveSubjects(ctx context.Context) ([]*model.Subject, error) {
 	return s.subjectRepo.GetActive(ctx)
+}
+
+// GetPublicSubjects получает предметы публичных учителей
+func (s *TeacherService) GetPublicSubjects(ctx context.Context) ([]*model.Subject, error) {
+	return s.subjectRepo.GetPublicActive(ctx)
+}
+
+// GetSubjectsByTeachers получает предметы конкретных учителей (по ID)
+func (s *TeacherService) GetSubjectsByTeachers(ctx context.Context, teacherIDs []int64) ([]*model.Subject, error) {
+	return s.subjectRepo.GetActiveByTeacherIDs(ctx, teacherIDs)
 }
 
 // GetSubjectByID получает предмет по ID
@@ -287,8 +297,9 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 	}
 
 	// Создаём recurring schedule (шаблон регулярного расписания)
+	// GroupID будет автоматически сгенерирован в БД при создании первой записи группы
 	recurringSchedule := &model.RecurringSchedule{
-		GroupID:         uuid.New(), // Генерируем уникальный group_id для одиночного расписания
+		GroupID:         0, // Будет установлен после создания первой записи
 		TeacherID:       teacherID,
 		SubjectID:       subjectID,
 		Weekday:         int(weekday),
@@ -305,7 +316,7 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 
 	s.logger.Info("Recurring schedule created",
 		zap.Int64("recurring_schedule_id", recurringSchedule.ID),
-		zap.String("group_id", recurringSchedule.GroupID.String()),
+		zap.Int64("group_id", recurringSchedule.GroupID),
 		zap.Int64("teacher_id", teacherID),
 		zap.Int64("subject_id", subjectID),
 		zap.Int("weekday", int(weekday)),
@@ -329,23 +340,26 @@ func (s *TeacherService) CreateWeeklySlots(ctx context.Context, teacherID, subje
 // CreateWeeklySlotsGroup создаёт группу регулярных расписаний с общим group_id
 // weekdays - массив дней недели (0 = Sunday, 6 = Saturday)
 // timeSlots - массив временных слотов (час и минута)
-func (s *TeacherService) CreateWeeklySlotsGroup(ctx context.Context, teacherID, subjectID int64, weekdays []int, timeSlots []struct{ Hour, Minute int }, durationMinutes int) (uuid.UUID, error) {
+func (s *TeacherService) CreateWeeklySlotsGroup(ctx context.Context, teacherID, subjectID int64, weekdays []int, timeSlots []struct{ Hour, Minute int }, durationMinutes int) (int64, error) {
 	// Проверяем что предмет принадлежит учителю
 	subject, err := s.subjectRepo.GetByID(ctx, subjectID)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("get subject: %w", err)
+		return 0, fmt.Errorf("get subject: %w", err)
 	}
 
 	if subject == nil {
-		return uuid.Nil, fmt.Errorf("subject not found")
+		return 0, fmt.Errorf("subject not found")
 	}
 
 	if subject.TeacherID != teacherID {
-		return uuid.Nil, fmt.Errorf("subject does not belong to teacher")
+		return 0, fmt.Errorf("subject does not belong to teacher")
 	}
 
-	// Генерируем общий group_id для всей группы
-	groupID := uuid.New()
+	// Получаем следующий свободный group_id
+	groupID, err := s.recurringRepo.GetNextGroupID(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("get next group_id: %w", err)
+	}
 
 	// Создаём recurring schedules для каждого дня и каждого времени
 	createdCount := 0
@@ -366,7 +380,7 @@ func (s *TeacherService) CreateWeeklySlotsGroup(ctx context.Context, teacherID, 
 			if err != nil {
 				s.logger.Error("Failed to create recurring schedule",
 					zap.Error(err),
-					zap.String("group_id", groupID.String()),
+					zap.Int64("group_id", groupID),
 					zap.Int("weekday", weekday),
 					zap.Int("hour", slot.Hour),
 					zap.Int("minute", slot.Minute))
@@ -390,7 +404,7 @@ func (s *TeacherService) CreateWeeklySlotsGroup(ctx context.Context, teacherID, 
 	}
 
 	s.logger.Info("Recurring schedule group created",
-		zap.String("group_id", groupID.String()),
+		zap.Int64("group_id", groupID),
 		zap.Int64("teacher_id", teacherID),
 		zap.Int64("subject_id", subjectID),
 		zap.Int("weekdays_count", len(weekdays)),
@@ -658,12 +672,12 @@ func (s *TeacherService) CancelBookingBySlot(ctx context.Context, slotID int64, 
 }
 
 // GetRecurringSchedulesByGroupID получает все recurring schedules по group_id
-func (s *TeacherService) GetRecurringSchedulesByGroupID(ctx context.Context, groupID string) ([]*model.RecurringSchedule, error) {
+func (s *TeacherService) GetRecurringSchedulesByGroupID(ctx context.Context, groupID int64) ([]*model.RecurringSchedule, error) {
 	return s.recurringRepo.GetByGroupID(ctx, groupID)
 }
 
 // DeactivateRecurringScheduleGroup деактивирует всю группу recurring schedules
-func (s *TeacherService) DeactivateRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID string) error {
+func (s *TeacherService) DeactivateRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID int64) error {
 	// Проверяем что группа принадлежит учителю
 	schedules, err := s.recurringRepo.GetByGroupID(ctx, groupID)
 	if err != nil {
@@ -684,7 +698,7 @@ func (s *TeacherService) DeactivateRecurringScheduleGroup(ctx context.Context, t
 	}
 
 	s.logger.Info("Recurring schedule group deactivated",
-		zap.String("group_id", groupID),
+		zap.Int64("group_id", groupID),
 		zap.Int64("teacher_id", teacherID),
 	)
 
@@ -692,7 +706,7 @@ func (s *TeacherService) DeactivateRecurringScheduleGroup(ctx context.Context, t
 }
 
 // DeleteRecurringScheduleGroup удаляет всю группу recurring schedules
-func (s *TeacherService) DeleteRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID string) error {
+func (s *TeacherService) DeleteRecurringScheduleGroup(ctx context.Context, teacherID int64, groupID int64) error {
 	// Проверяем что группа принадлежит учителю
 	schedules, err := s.recurringRepo.GetByGroupID(ctx, groupID)
 	if err != nil {
@@ -713,7 +727,7 @@ func (s *TeacherService) DeleteRecurringScheduleGroup(ctx context.Context, teach
 	}
 
 	s.logger.Info("Recurring schedule group deleted",
-		zap.String("group_id", groupID),
+		zap.Int64("group_id", groupID),
 		zap.Int64("teacher_id", teacherID),
 	)
 

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
+	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/Freeeeeet/scheduler_bot/internal/service"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -38,6 +39,21 @@ func NewHandler(
 	userService *service.UserService,
 	bookingService *service.BookingService,
 	teacherService *service.TeacherService,
+	accessService *service.StudentAccessService,
+	userRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.User, error)
+		UpdatePublicStatus(ctx context.Context, userID int64, isPublic bool) error
+	},
+	inviteCodeRepo interface {
+		GetByCode(ctx context.Context, code string) (*model.TeacherInviteCode, error)
+		CountActiveCodesByTeacher(ctx context.Context, teacherID int64) (int, error)
+	},
+	accessRepo interface {
+		GetAccessInfo(ctx context.Context, studentID, teacherID int64) (*model.StudentTeacherAccess, error)
+	},
+	accessRequestRepo interface {
+		GetByID(ctx context.Context, id int64) (*model.AccessRequest, error)
+	},
 	stateManager callbacktypes.StateManager,
 	logger *zap.Logger,
 	handleSubjects func(ctx context.Context, b *bot.Bot, update *models.Update),
@@ -45,14 +61,19 @@ func NewHandler(
 	handleMySubjects func(ctx context.Context, b *bot.Bot, update *models.Update),
 ) *Handler {
 	inner := &callbacktypes.Handler{
-		UserService:      userService,
-		BookingService:   bookingService,
-		TeacherService:   teacherService,
-		StateManager:     stateManager,
-		Logger:           logger,
-		HandleSubjects:   handleSubjects,
-		HandleMySchedule: handleMySchedule,
-		HandleMySubjects: handleMySubjects,
+		UserService:       userService,
+		BookingService:    bookingService,
+		TeacherService:    teacherService,
+		AccessService:     accessService,
+		UserRepo:          userRepo,
+		InviteCodeRepo:    inviteCodeRepo,
+		AccessRepo:        accessRepo,
+		AccessRequestRepo: accessRequestRepo,
+		StateManager:      stateManager,
+		Logger:            logger,
+		HandleSubjects:    handleSubjects,
+		HandleMySchedule:  handleMySchedule,
+		HandleMySubjects:  handleMySubjects,
 	}
 	return &Handler{Handler: inner}
 }

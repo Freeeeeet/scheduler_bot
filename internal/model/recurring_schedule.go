@@ -1,15 +1,11 @@
 package model
 
-import (
-	"time"
-
-	"github.com/google/uuid"
-)
+import "time"
 
 // RecurringSchedule представляет шаблон регулярного расписания
 type RecurringSchedule struct {
 	ID              int64     `json:"id"`
-	GroupID         uuid.UUID `json:"group_id"` // идентификатор группы связанных расписаний
+	GroupID         int64     `json:"group_id"` // идентификатор группы связанных расписаний
 	TeacherID       int64     `json:"teacher_id"`
 	SubjectID       int64     `json:"subject_id"`
 	Weekday         int       `json:"weekday"`          // 0 = Sunday, 6 = Saturday

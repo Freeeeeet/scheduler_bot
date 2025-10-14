@@ -317,6 +317,60 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 	case strings.HasPrefix(data, "reject_recurring:"):
 		recurring.HandleRejectRecurring(ctx, b, callback, h)
 
+	// ===== Student: Teacher Access Management =====
+	case data == "subjects_menu":
+		// Back to subjects menu - will be handled in the main command handler
+		common.HandleBackToSubjects(ctx, b, callback, h)
+	case data == "my_teachers":
+		student.HandleMyTeachers(ctx, b, callback, h)
+	case data == "public_teachers":
+		student.HandlePublicTeachers(ctx, b, callback, h)
+	case strings.HasPrefix(data, "public_teachers_page:"):
+		page, err := common.ParseIDFromCallback(data)
+		if err != nil {
+			h.Logger.Error("Failed to parse page number", zap.Error(err))
+			common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
+			return
+		}
+		student.HandlePublicTeachersPage(ctx, b, callback, h, int(page))
+	case strings.HasPrefix(data, "teacher_profile:"):
+		student.HandleTeacherProfile(ctx, b, callback, h)
+	case data == "find_teacher":
+		student.HandleFindTeacher(ctx, b, callback, h)
+	case data == "enter_invite_code":
+		student.HandleEnterInviteCode(ctx, b, callback, h)
+	case data == "send_access_request":
+		student.HandleSendAccessRequest(ctx, b, callback, h)
+	case data == "my_requests":
+		student.HandleMyRequests(ctx, b, callback, h)
+
+	// ===== Teacher: Access Settings =====
+	case data == "teacher_settings":
+		teacher.HandleTeacherSettings(ctx, b, callback, h)
+	case data == "toggle_public_status":
+		teacher.HandleTogglePublicStatus(ctx, b, callback, h)
+	case data == "manage_invite_codes":
+		teacher.HandleManageInviteCodes(ctx, b, callback, h)
+	case data == "create_invite_code":
+		teacher.HandleCreateInviteCode(ctx, b, callback, h)
+	case strings.HasPrefix(data, "deactivate_code:"):
+		teacher.HandleDeactivateInviteCode(ctx, b, callback, h)
+	case data == "view_access_requests":
+		teacher.HandleViewAccessRequests(ctx, b, callback, h)
+	case strings.HasPrefix(data, "approve_request:"):
+		teacher.HandleApproveAccessRequest(ctx, b, callback, h)
+	case strings.HasPrefix(data, "reject_request:"):
+		teacher.HandleRejectAccessRequest(ctx, b, callback, h)
+	case data == "view_my_students":
+		teacher.HandleViewMyStudents(ctx, b, callback, h)
+	case strings.HasPrefix(data, "revoke_access:"):
+		teacher.HandleRevokeStudentAccess(ctx, b, callback, h)
+	case data == "mysubjects":
+		// Back to my subjects - will be handled in the main command handler
+		if h.HandleMySubjects != nil {
+			h.HandleMySubjects(ctx, b, &models.Update{CallbackQuery: callback})
+		}
+
 	// ===== Unknown Callback =====
 	default:
 		h.Logger.Warn("Unknown callback",

@@ -10,6 +10,7 @@ type User struct {
 	LastName            string    `json:"last_name"`
 	LanguageCode        string    `json:"language_code"`
 	IsTeacher           bool      `json:"is_teacher"`
+	IsPublic            bool      `json:"is_public"`             // Публичный учитель (виден всем) или приватный (нужен доступ)
 	AutoApproveBookings bool      `json:"auto_approve_bookings"` // Автоматически одобрять записи
 	CreatedAt           time.Time `json:"created_at"`
 }

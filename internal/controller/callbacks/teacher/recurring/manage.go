@@ -86,23 +86,23 @@ func HandleManageRecurring(ctx context.Context, b *bot.Bot, callback *models.Cal
 		text += "Постоянное расписание автоматически создаёт слоты каждую неделю."
 	} else {
 		// Группируем расписания по group_id
-		groupMap := make(map[string][]*model.RecurringSchedule)
+		groupMap := make(map[int64][]*model.RecurringSchedule)
 		for _, rs := range recurringSchedules {
 			if !rs.IsActive {
 				continue
 			}
-			groupID := rs.GroupID.String()
+			groupID := rs.GroupID
 			groupMap[groupID] = append(groupMap[groupID], rs)
 		}
 
 		text += fmt.Sprintf("У вас <b>%d</b> %s:\n\n", len(groupMap), formatting.PluralizeSchedules(len(groupMap)))
 
 		// Сортируем группы для стабильного отображения
-		var groupIDs []string
+		var groupIDs []int64
 		for groupID := range groupMap {
 			groupIDs = append(groupIDs, groupID)
 		}
-		sort.Strings(groupIDs)
+		sort.Slice(groupIDs, func(i, j int) bool { return groupIDs[i] < groupIDs[j] })
 
 		// Отображаем группы
 		for i, groupID := range groupIDs {
@@ -116,8 +116,8 @@ func HandleManageRecurring(ctx context.Context, b *bot.Bot, callback *models.Cal
 			displayText := formatGroupDisplay(group)
 
 			buttons = append(buttons, []models.InlineKeyboardButton{
-				{Text: displayText, CallbackData: fmt.Sprintf("view_recurring_group:%s", groupID)},
-				{Text: "🗑", CallbackData: fmt.Sprintf("delete_recurring_group:%s", groupID)},
+				{Text: displayText, CallbackData: fmt.Sprintf("view_recurring_group:%d", groupID)},
+				{Text: "🗑", CallbackData: fmt.Sprintf("delete_recurring_group:%d", groupID)},
 			})
 
 			// Ограничиваем количество отображаемых групп
@@ -173,7 +173,12 @@ func HandleViewRecurringGroup(ctx context.Context, b *bot.Bot, callback *models.
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 
 	// Определяем source из callback
 	source := "mysubjects" // по умолчанию
@@ -189,7 +194,7 @@ func HandleViewRecurringGroup(ctx context.Context, b *bot.Bot, callback *models.
 	}
 
 	telegramID := callback.From.ID
-	_, err := h.UserService.GetByTelegramID(ctx, telegramID)
+	_, err = h.UserService.GetByTelegramID(ctx, telegramID)
 	if err != nil {
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Пользователь не найден")
 		return
@@ -274,7 +279,7 @@ func HandleViewRecurringGroup(ctx context.Context, b *bot.Bot, callback *models.
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
-				{Text: "🗑 Удалить расписание", CallbackData: fmt.Sprintf("delete_recurring_group:%s:%s", groupID, source)},
+				{Text: "🗑 Удалить расписание", CallbackData: fmt.Sprintf("delete_recurring_group:%d:%s", groupID, source)},
 			},
 			{
 				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("manage_recurring:%d:%s", subject.ID, source)},
@@ -307,7 +312,12 @@ func HandleDeleteRecurringGroup(ctx context.Context, b *bot.Bot, callback *model
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 
 	// Определяем source
 	source := "mysubjects" // по умолчанию

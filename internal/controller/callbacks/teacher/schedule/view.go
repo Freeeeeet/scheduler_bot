@@ -201,12 +201,12 @@ func HandleViewSubjectSchedule(ctx context.Context, b *bot.Bot, callback *models
 		text += "🔄 <b>Постоянные расписания:</b>\n"
 
 		// Группируем расписания по group_id
-		groupMap := make(map[string][]*model.RecurringSchedule)
+		groupMap := make(map[int64][]*model.RecurringSchedule)
 		for _, rs := range recurringSchedules {
 			if !rs.IsActive {
 				continue
 			}
-			groupID := rs.GroupID.String()
+			groupID := rs.GroupID
 			groupMap[groupID] = append(groupMap[groupID], rs)
 		}
 

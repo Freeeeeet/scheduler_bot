@@ -33,7 +33,12 @@ func HandleEditRecurringMenu(ctx context.Context, b *bot.Bot, callback *models.C
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 
 	// Определяем source
 	source := "mysubjects"
@@ -143,7 +148,12 @@ func HandleEditRecurringDays(ctx context.Context, b *bot.Bot, callback *models.C
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	source := "mysubjects"
 	if len(parts) >= 3 {
 		source = parts[2]
@@ -197,7 +207,7 @@ func HandleEditRecurringDays(ctx context.Context, b *bot.Bot, callback *models.C
 }
 
 // showEditRecurringDaysSelection показывает интерфейс выбора дней
-func showEditRecurringDaysSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, subject interface{}, selectedWeekdays map[int]bool, groupID, source string) {
+func showEditRecurringDaysSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, subject interface{}, selectedWeekdays map[int]bool, groupID int64, source string) {
 	// Преобразуем subject к нужному типу
 	type SubjectInfo struct {
 		Name string
@@ -273,7 +283,12 @@ func HandleToggleEditWeekday(ctx context.Context, b *bot.Bot, callback *models.C
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	weekday, err := strconv.Atoi(parts[2])
 	if err != nil {
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный день")
@@ -349,7 +364,12 @@ func HandleSaveRecurringDays(ctx context.Context, b *bot.Bot, callback *models.C
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	source := "mysubjects"
 	if len(parts) >= 3 {
 		source = parts[2]
@@ -460,7 +480,7 @@ func HandleSaveRecurringDays(ctx context.Context, b *bot.Bot, callback *models.C
 					{Text: "⬅️ К расписаниям", CallbackData: fmt.Sprintf("manage_recurring:%d:%s", subject.ID, source)},
 				},
 				{
-					{Text: "👁 Посмотреть", CallbackData: fmt.Sprintf("view_recurring_group:%s:%s", newGroupID.String(), source)},
+					{Text: "👁 Посмотреть", CallbackData: fmt.Sprintf("view_recurring_group:%d:%s", newGroupID, source)},
 				},
 			},
 		}
@@ -490,7 +510,12 @@ func HandleEditRecurringTime(ctx context.Context, b *bot.Bot, callback *models.C
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	source := "mysubjects"
 	if len(parts) >= 3 {
 		source = parts[2]
@@ -503,7 +528,7 @@ func HandleEditRecurringTime(ctx context.Context, b *bot.Bot, callback *models.C
 	}
 
 	telegramID := callback.From.ID
-	_, err := h.UserService.GetByTelegramID(ctx, telegramID)
+	_, err = h.UserService.GetByTelegramID(ctx, telegramID)
 	if err != nil {
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Пользователь не найден")
 		return
@@ -598,7 +623,12 @@ func HandleRecurringEditTimeMode(ctx context.Context, b *bot.Bot, callback *mode
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	mode := parts[2]
 	source := "mysubjects"
 	if len(parts) >= 4 {
@@ -625,7 +655,7 @@ func HandleRecurringEditTimeMode(ctx context.Context, b *bot.Bot, callback *mode
 }
 
 // showRecurringEditIntervalSelection показывает выбор временного интервала
-func showRecurringEditIntervalSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, groupID, source string) {
+func showRecurringEditIntervalSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, groupID int64, source string) {
 	telegramID := callback.From.ID
 
 	// Получаем subject_id из state
@@ -701,7 +731,12 @@ func HandleRecurringEditIntervalStart(ctx context.Context, b *bot.Bot, callback 
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	startHour, _ := strconv.Atoi(parts[2])
 	startMinute, _ := strconv.Atoi(parts[3])
 	source := "mysubjects"
@@ -787,7 +822,12 @@ func HandleRecurringEditIntervalEnd(ctx context.Context, b *bot.Bot, callback *m
 		return
 	}
 
-	groupID := parts[1]
+	groupID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		h.Logger.Error("Invalid group_id", zap.Error(err))
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID группы")
+		return
+	}
 	endHour, _ := strconv.Atoi(parts[2])
 	endMinute, _ := strconv.Atoi(parts[3])
 	source := "mysubjects"
@@ -881,7 +921,7 @@ func HandleRecurringEditIntervalEnd(ctx context.Context, b *bot.Bot, callback *m
 					{Text: "⬅️ К расписаниям", CallbackData: fmt.Sprintf("manage_recurring:%d:%s", subject.ID, source)},
 				},
 				{
-					{Text: "👁 Посмотреть", CallbackData: fmt.Sprintf("view_recurring_group:%s:%s", newGroupID.String(), source)},
+					{Text: "👁 Посмотреть", CallbackData: fmt.Sprintf("view_recurring_group:%d:%s", newGroupID, source)},
 				},
 			},
 		}
@@ -899,7 +939,7 @@ func HandleRecurringEditIntervalEnd(ctx context.Context, b *bot.Bot, callback *m
 }
 
 // showRecurringEditSpecificSlotsSelection показывает выбор конкретных слотов
-func showRecurringEditSpecificSlotsSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, groupID, source string) {
+func showRecurringEditSpecificSlotsSelection(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, msg *models.Message, groupID int64, source string) {
 	// Реализация аналогична созданию с конкретными слотами
 	// Для краткости опущена, так как редко используется
 	common.AnswerCallbackAlert(ctx, b, callback.ID, "⚠️ Функция в разработке. Используйте интервал.")

@@ -78,6 +78,9 @@ func main() {
 	slotRepo := repository.NewSlotRepository(pool)
 	bookingRepo := repository.NewBookingRepository(pool)
 	recurringRepo := repository.NewRecurringScheduleRepository(pool, logger)
+	accessRepo := repository.NewAccessRepository(pool)
+	inviteCodeRepo := repository.NewInviteCodeRepository(pool)
+	accessRequestRepo := repository.NewAccessRequestRepository(pool)
 
 	logger.Info("✅ Repositories initialized")
 
@@ -85,6 +88,7 @@ func main() {
 	userService := service.NewUserService(userRepo, logger)
 	bookingService := service.NewBookingService(pool, userRepo, subjectRepo, slotRepo, bookingRepo, logger)
 	teacherService := service.NewTeacherService(userRepo, subjectRepo, slotRepo, bookingRepo, recurringRepo, logger)
+	accessService := service.NewStudentAccessService(accessRepo, inviteCodeRepo, accessRequestRepo, userRepo, subjectRepo, logger)
 
 	logger.Info("✅ Services initialized")
 
@@ -97,7 +101,18 @@ func main() {
 	logger.Info("✅ Telegram bot created")
 
 	// Инициализация контроллера
-	botController := controller.NewBotController(botInstance, userService, bookingService, teacherService, logger)
+	botController := controller.NewBotController(
+		botInstance,
+		userService,
+		bookingService,
+		teacherService,
+		accessService,
+		userRepo,
+		inviteCodeRepo,
+		accessRepo,
+		accessRequestRepo,
+		logger,
+	)
 
 	// Регистрируем handlers и устанавливаем меню команд
 	if err := botController.RegisterHandlers(ctx); err != nil {

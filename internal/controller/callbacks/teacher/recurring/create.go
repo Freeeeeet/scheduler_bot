@@ -601,7 +601,7 @@ func HandleRecurringIntervalEnd(ctx context.Context, b *bot.Bot, callback *model
 	totalCreated := len(weekdays) * len(timeSlots)
 
 	h.Logger.Info("Created recurring schedule group",
-		zap.String("group_id", groupID.String()),
+		zap.Int64("group_id", groupID),
 		zap.Int("total_schedules", totalCreated))
 
 	// Очищаем state
@@ -880,7 +880,7 @@ func HandleCreateRecurringSpecificConfirm(ctx context.Context, b *bot.Bot, callb
 	totalCreated := len(weekdays) * len(timeSlots)
 
 	h.Logger.Info("Created recurring schedule group",
-		zap.String("group_id", groupID.String()),
+		zap.Int64("group_id", groupID),
 		zap.Int("total_schedules", totalCreated))
 
 	// Очищаем state

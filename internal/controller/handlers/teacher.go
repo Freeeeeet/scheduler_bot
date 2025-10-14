@@ -180,6 +180,11 @@ func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *mod
 		{Text: "📅 Управление расписанием", CallbackData: callbacks.ViewSchedule},
 	})
 
+	// Кнопка настроек доступа
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⚙️ Настройки доступа", CallbackData: "teacher_settings"},
+	})
+
 	keyboard := &models.InlineKeyboardMarkup{
 		InlineKeyboard: buttons,
 	}

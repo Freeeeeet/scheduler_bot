@@ -162,6 +162,8 @@ func (h *Handlers) HandleTextMessage(ctx context.Context, b *bot.Bot, update *mo
 		h.handleEditSubjectPrice(ctx, b, update)
 	case state.StateEditSubjectDuration:
 		h.handleEditSubjectDuration(ctx, b, update)
+	case state.StateEnteringInviteCode:
+		h.handleEnteringInviteCode(ctx, b, update)
 	case "custom_slot_time":
 		h.handleCustomSlotTime(ctx, b, update)
 	default:

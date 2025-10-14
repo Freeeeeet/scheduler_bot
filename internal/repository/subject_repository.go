@@ -230,3 +230,84 @@ func (r *SubjectRepository) Delete(ctx context.Context, id int64) error {
 
 	return nil
 }
+
+// GetPublicActive получает активные предметы публичных учителей
+func (r *SubjectRepository) GetPublicActive(ctx context.Context) ([]*model.Subject, error) {
+	query := `
+		SELECT s.id, s.teacher_id, s.name, s.description, s.price, s.duration, s.is_active, s.requires_booking_approval, s.created_at
+		FROM subjects s
+		INNER JOIN users u ON s.teacher_id = u.id
+		WHERE s.is_active = true AND u.is_teacher = true AND u.is_public = true
+		ORDER BY s.name
+	`
+
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("get public active subjects: %w", err)
+	}
+	defer rows.Close()
+
+	var subjects []*model.Subject
+	for rows.Next() {
+		var subject model.Subject
+		err := rows.Scan(
+			&subject.ID,
+			&subject.TeacherID,
+			&subject.Name,
+			&subject.Description,
+			&subject.Price,
+			&subject.Duration,
+			&subject.IsActive,
+			&subject.RequiresBookingApproval,
+			&subject.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan subject: %w", err)
+		}
+		subjects = append(subjects, &subject)
+	}
+
+	return subjects, nil
+}
+
+// GetActiveByTeacherIDs получает активные предметы списка учителей
+func (r *SubjectRepository) GetActiveByTeacherIDs(ctx context.Context, teacherIDs []int64) ([]*model.Subject, error) {
+	if len(teacherIDs) == 0 {
+		return []*model.Subject{}, nil
+	}
+
+	query := `
+		SELECT id, teacher_id, name, description, price, duration, is_active, requires_booking_approval, created_at
+		FROM subjects
+		WHERE teacher_id = ANY($1) AND is_active = true
+		ORDER BY teacher_id, name
+	`
+
+	rows, err := r.pool.Query(ctx, query, teacherIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get active subjects by teacher ids: %w", err)
+	}
+	defer rows.Close()
+
+	var subjects []*model.Subject
+	for rows.Next() {
+		var subject model.Subject
+		err := rows.Scan(
+			&subject.ID,
+			&subject.TeacherID,
+			&subject.Name,
+			&subject.Description,
+			&subject.Price,
+			&subject.Duration,
+			&subject.IsActive,
+			&subject.RequiresBookingApproval,
+			&subject.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan subject: %w", err)
+		}
+		subjects = append(subjects, &subject)
+	}
+
+	return subjects, nil
+}
