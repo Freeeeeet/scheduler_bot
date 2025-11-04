@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
@@ -53,7 +54,8 @@ func (h *Handlers) HandleBecomeTeacher(ctx context.Context, b *bot.Bot, update *
 }
 
 // HandleMySubjects обрабатывает команду /mysubjects
-func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *models.Update) {
+// Если передан messageID, редактирует существующее сообщение, иначе отправляет новое
+func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *models.Update, messageID ...int) {
 	user, ok := h.requireTeacher(ctx, b, update)
 	if !ok {
 		return
@@ -63,14 +65,39 @@ func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *mod
 		zap.Int64("user_id", user.ID),
 		zap.Int64("telegram_id", user.TelegramID))
 
+	var chatID int64
+	if update.Message != nil {
+		chatID = update.Message.Chat.ID
+	} else if update.CallbackQuery != nil {
+		// Получаем ChatID из CallbackQuery через helper
+		msg := common.GetMessageFromCallback(update.CallbackQuery)
+		if msg != nil {
+			chatID = msg.Chat.ID
+		} else {
+			h.logger.Error("Cannot determine chat ID from CallbackQuery")
+			return
+		}
+	} else {
+		h.logger.Error("Cannot determine chat ID")
+		return
+	}
+
 	// Получаем предметы учителя
 	subjects, err := h.teacherService.GetTeacherSubjects(ctx, user.ID)
 	if err != nil {
 		h.logger.Error("Failed to get teacher subjects", zap.Error(err))
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.Chat.ID,
-			Text:   "❌ Не удалось загрузить ваши предметы.",
-		})
+		if len(messageID) > 0 && messageID[0] > 0 {
+			b.EditMessageText(ctx, &bot.EditMessageTextParams{
+				ChatID:    chatID,
+				MessageID: messageID[0],
+				Text:      "❌ Не удалось загрузить ваши предметы.",
+			})
+		} else {
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID: chatID,
+				Text:   "❌ Не удалось загрузить ваши предметы.",
+			})
+		}
 		return
 	}
 
@@ -82,118 +109,56 @@ func (h *Handlers) HandleMySubjects(ctx context.Context, b *bot.Bot, update *mod
 		keyboard := &models.InlineKeyboardMarkup{
 			InlineKeyboard: [][]models.InlineKeyboardButton{
 				{
-					{Text: "➕ Создать первый предмет", CallbackData: callbacks.CreateFirstSubject},
+					{Text: "➕ Создать первый предмет", CallbackData: "create_first_subject"},
 				},
 			},
 		}
 
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      update.Message.Chat.ID,
-			Text:        "📚 У вас пока нет предметов.\n\nСоздайте свой первый предмет для преподавания!",
-			ReplyMarkup: keyboard,
-		})
+		text := "📚 У вас пока нет предметов.\n\nСоздайте свой первый предмет для преподавания!"
+		if len(messageID) > 0 && messageID[0] > 0 {
+			b.EditMessageText(ctx, &bot.EditMessageTextParams{
+				ChatID:      chatID,
+				MessageID:   messageID[0],
+				Text:        text,
+				ReplyMarkup: keyboard,
+			})
+		} else {
+			b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID:      chatID,
+				Text:        text,
+				ReplyMarkup: keyboard,
+			})
+		}
 		return
 	}
 
-	// Пагинация: показываем по 10 предметов на странице
-	const pageSize = 10
+	// Используем билдер экрана списка предметов
 	page := 0 // первая страница по умолчанию
+	text, keyboard := common.BuildSubjectsListScreen(subjects, page)
 
-	text := fmt.Sprintf("📚 Ваши предметы (всего: %d):\n\n", len(subjects))
-	var buttons [][]models.InlineKeyboardButton
-
-	// Вычисляем индексы для текущей страницы
-	startIdx := page * pageSize
-	endIdx := startIdx + pageSize
-	if endIdx > len(subjects) {
-		endIdx = len(subjects)
-	}
-
-	// Показываем предметы текущей страницы
-	for i := startIdx; i < endIdx; i++ {
-		subject := subjects[i]
-		statusEmoji := "✅"
-		statusText := "Активен"
-
-		if !subject.IsActive {
-			statusEmoji = "⏸"
-			statusText = "Неактивен"
-		}
-
-		text += fmt.Sprintf(
-			"%d. %s %s\n"+
-				"   💰 Цена: %s\n"+
-				"   ⏱ Длительность: %d мин\n"+
-				"   📝 %s\n"+
-				"   Статус: %s\n\n",
-			i+1,
-			statusEmoji,
-			subject.Name,
-			FormatPrice(subject.Price),
-			subject.Duration,
-			subject.Description,
-			statusText,
-		)
-
-		// Кнопки для каждого предмета
-		buttons = append(buttons, []models.InlineKeyboardButton{
-			{Text: fmt.Sprintf("📝 %s", subject.Name), CallbackData: fmt.Sprintf("%s%d", callbacks.ViewSubject, subject.ID)},
-			{Text: "✏️", CallbackData: fmt.Sprintf("%s%d", callbacks.EditSubject, subject.ID)},
-			{Text: statusEmoji, CallbackData: fmt.Sprintf("%s%d", callbacks.ToggleSubject, subject.ID)},
-		})
-	}
-
-	// Добавляем подсказку о создании слотов
-	text += "\n💡 Совет: Создайте временные слоты через /myschedule чтобы студенты могли записываться!\n\n"
-
-	// Кнопки пагинации
-	totalPages := (len(subjects) + pageSize - 1) / pageSize
-	if totalPages > 1 {
-		var paginationButtons []models.InlineKeyboardButton
-
-		// Кнопка "Предыдущая" только если не первая страница
-		if page > 0 {
-			paginationButtons = append(paginationButtons,
-				models.InlineKeyboardButton{Text: "⬅️ Предыдущая", CallbackData: fmt.Sprintf("subjects_page:%d", page-1)})
-		}
-
-		// Показываем номер страницы
-		paginationButtons = append(paginationButtons,
-			models.InlineKeyboardButton{Text: fmt.Sprintf("📄 %d/%d", page+1, totalPages), CallbackData: "noop"})
-
-		// Кнопка "Следующая" только если не последняя страница
-		if page < totalPages-1 {
-			paginationButtons = append(paginationButtons,
-				models.InlineKeyboardButton{Text: "Следующая ➡️", CallbackData: fmt.Sprintf("subjects_page:%d", page+1)})
-		}
-
-		buttons = append(buttons, paginationButtons)
-	}
-
-	// Кнопка создать новый предмет
-	buttons = append(buttons, []models.InlineKeyboardButton{
-		{Text: "➕ Создать новый предмет", CallbackData: callbacks.CreateFirstSubject},
-	})
-
-	// Кнопка для быстрого перехода к расписанию
-	buttons = append(buttons, []models.InlineKeyboardButton{
-		{Text: "📅 Управление расписанием", CallbackData: callbacks.ViewSchedule},
-	})
-
-	// Кнопка настроек доступа
-	buttons = append(buttons, []models.InlineKeyboardButton{
+	// Добавляем дополнительную кнопку настроек доступа
+	keyboard.InlineKeyboard = append(keyboard.InlineKeyboard, []models.InlineKeyboardButton{
 		{Text: "⚙️ Настройки доступа", CallbackData: "teacher_settings"},
 	})
 
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: buttons,
+	if len(messageID) > 0 && messageID[0] > 0 {
+		// Редактируем существующее сообщение
+		b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:      chatID,
+			MessageID:   messageID[0],
+			Text:        text,
+			ParseMode:   models.ParseModeHTML,
+			ReplyMarkup: keyboard,
+		})
+	} else {
+		// Отправляем новое сообщение
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:      chatID,
+			Text:        text,
+			ParseMode:   models.ParseModeHTML,
+			ReplyMarkup: keyboard,
+		})
 	}
-
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      update.Message.Chat.ID,
-		Text:        text,
-		ReplyMarkup: keyboard,
-	})
 }
 
 // HandleMySchedule обрабатывает команду /myschedule

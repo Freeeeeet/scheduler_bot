@@ -6,10 +6,102 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	"go.uber.org/zap"
 )
+
+// showEditSubjectScreen показывает экран редактирования предмета
+func (h *Handlers) showEditSubjectScreen(ctx context.Context, b *bot.Bot, chatID int64, subjectID int64) {
+	subject, err := h.teacherService.GetSubjectByID(ctx, subjectID)
+	if err != nil || subject == nil {
+		h.logger.Error("Subject not found for edit screen",
+			zap.Int64("subject_id", subjectID),
+			zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: chatID,
+			Text:   "❌ Предмет не найден",
+		})
+		return
+	}
+
+	// Используем билдер экрана из общего пакета
+	text, keyboard := buildEditSubjectScreen(subject)
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: keyboard,
+	})
+}
+
+// buildEditSubjectScreen - локальная обёртка для билдера из common
+// (можно было бы импортировать напрямую, но для избежания циклических импортов дублируем)
+func buildEditSubjectScreen(subject *model.Subject) (string, *models.InlineKeyboardMarkup) {
+	price := float64(subject.Price) / 100
+	statusText := "Активен ✅"
+	if !subject.IsActive {
+		statusText = "Неактивен ⏸"
+	}
+	approvalText := "Нет ❌"
+	if subject.RequiresBookingApproval {
+		approvalText = "Да ✅"
+	}
+
+	text := fmt.Sprintf(
+		"🛠 <b>Редактирование предмета</b>\n\n"+
+			"📚 Название: %s\n"+
+			"📝 Описание: %s\n"+
+			"💰 Цена: %.2f ₽\n"+
+			"⏱ Длительность: %d мин\n"+
+			"⏳ Требуется одобрение: %s\n"+
+			"📊 Статус: %s\n\n"+
+			"Выберите, что хотите изменить:",
+		subject.Name,
+		subject.Description,
+		price,
+		subject.Duration,
+		approvalText,
+		statusText,
+	)
+
+	// Формируем текст для кнопок с текущим состоянием
+	approvalButtonText := "⏳ Требуется одобрение: нет"
+	if subject.RequiresBookingApproval {
+		approvalButtonText = "⏳ Требуется одобрение: да"
+	}
+
+	statusButtonText := "📊 Статус: активен"
+	if !subject.IsActive {
+		statusButtonText = "📊 Статус: неактивен"
+	}
+
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{
+				{Text: "📝 Название", CallbackData: fmt.Sprintf("edit_field_name:%d", subject.ID)},
+				{Text: "📄 Описание", CallbackData: fmt.Sprintf("edit_field_desc:%d", subject.ID)},
+			},
+			{
+				{Text: "💰 Цена", CallbackData: fmt.Sprintf("edit_field_price:%d", subject.ID)},
+				{Text: "⏱ Длительность", CallbackData: fmt.Sprintf("edit_field_duration:%d", subject.ID)},
+			},
+			{
+				{Text: approvalButtonText, CallbackData: fmt.Sprintf("toggle_approval:%d", subject.ID)},
+			},
+			{
+				{Text: statusButtonText, CallbackData: fmt.Sprintf("toggle_subject:%d", subject.ID)},
+			},
+			{
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subject.ID)},
+			},
+		},
+	}
+
+	return text, keyboard
+}
 
 // handleEditSubjectName обрабатывает ввод нового названия предмета
 func (h *Handlers) handleEditSubjectName(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -81,13 +173,10 @@ func (h *Handlers) handleEditSubjectName(ctx context.Context, b *bot.Bot, update
 		return
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:    update.Message.Chat.ID,
-		Text:      fmt.Sprintf("✅ Название обновлено: **%s**", name),
-		ParseMode: models.ParseModeMarkdown,
-	})
-
 	h.stateManager.ClearState(telegramID)
+
+	// Показываем экран редактирования предмета
+	h.showEditSubjectScreen(ctx, b, update.Message.Chat.ID, subjectID)
 }
 
 // handleEditSubjectDescription обрабатывает ввод нового описания предмета
@@ -158,12 +247,10 @@ func (h *Handlers) handleEditSubjectDescription(ctx context.Context, b *bot.Bot,
 		return
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   "✅ Описание обновлено",
-	})
-
 	h.stateManager.ClearState(telegramID)
+
+	// Показываем экран редактирования предмета
+	h.showEditSubjectScreen(ctx, b, update.Message.Chat.ID, subjectID)
 }
 
 // handleEditSubjectPrice обрабатывает ввод новой цены предмета
@@ -238,12 +325,10 @@ func (h *Handlers) handleEditSubjectPrice(ctx context.Context, b *bot.Bot, updat
 		return
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   fmt.Sprintf("✅ Цена обновлена: %.2f ₽", price),
-	})
-
 	h.stateManager.ClearState(telegramID)
+
+	// Показываем экран редактирования предмета
+	h.showEditSubjectScreen(ctx, b, update.Message.Chat.ID, subjectID)
 }
 
 // handleEditSubjectDuration обрабатывает ввод новой длительности предмета
@@ -315,10 +400,8 @@ func (h *Handlers) handleEditSubjectDuration(ctx context.Context, b *bot.Bot, up
 		return
 	}
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   fmt.Sprintf("✅ Длительность обновлена: %d минут", duration),
-	})
-
 	h.stateManager.ClearState(telegramID)
+
+	// Показываем экран редактирования предмета
+	h.showEditSubjectScreen(ctx, b, update.Message.Chat.ID, subjectID)
 }

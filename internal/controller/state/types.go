@@ -33,6 +33,9 @@ const (
 	// Состояния для учителей - управление доступом
 	StateCreatingInviteCode  UserState = "creating_invite_code"
 	StateRespondingToRequest UserState = "responding_to_request"
+
+	// Состояния для пометки слотов занятыми
+	StateMarkSlotBusyComment UserState = "mark_slot_busy_comment"
 )
 
 // UserData хранит временные данные пользователя во время диалога

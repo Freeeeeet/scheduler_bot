@@ -3,6 +3,8 @@ package subjects
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
 
@@ -230,52 +232,8 @@ func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		zap.Int64("subject_id", subjectID),
 		zap.String("name", subject.Name))
 
-	price := float64(subject.Price) / 100
-	statusText := "✅ Активен"
-	if !subject.IsActive {
-		statusText = "⏸ Неактивен"
-	}
-
-	approvalText := "❌ Нет"
-	if subject.RequiresBookingApproval {
-		approvalText = "✅ Да"
-	}
-
-	text := fmt.Sprintf(
-		"📚 <b>%s</b>\n\n"+
-			"📝 Описание: %s\n"+
-			"💰 Цена: %.2f ₽\n"+
-			"⏱ Длительность: %d мин\n"+
-			"📊 Статус: %s\n"+
-			"⏳ Требуется одобрение: %s\n\n"+
-			"Выберите действие:",
-		subject.Name,
-		subject.Description,
-		price,
-		subject.Duration,
-		statusText,
-		approvalText,
-	)
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "📅 Посмотреть расписание", CallbackData: fmt.Sprintf("view_schedule_calendar:%d", subjectID)},
-			},
-			{
-				{Text: "📊 Управление расписанием", CallbackData: fmt.Sprintf("subject_schedule:%d", subjectID)},
-			},
-			{
-				{Text: "✏️ Редактировать", CallbackData: fmt.Sprintf("edit_subject:%d", subjectID)},
-			},
-			{
-				{Text: "🗑 Удалить предмет", CallbackData: fmt.Sprintf("delete_subject:%d", subjectID)},
-			},
-			{
-				{Text: "⬅️ Назад к списку", CallbackData: "back_to_subjects"},
-			},
-		},
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildViewSubjectScreen(subject)
 
 	h.Logger.Info("Sending view subject message",
 		zap.Int64("chat_id", msg.Chat.ID),
@@ -290,7 +248,39 @@ func HandleViewSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 	})
 
 	if err != nil {
-		h.Logger.Error("Failed to edit message", zap.Error(err))
+		errStr := err.Error()
+		// Игнорируем ошибку "message is not modified" - это не настоящая ошибка
+		if common.IsMessageNotModifiedError(err) {
+			// Сообщение уже имеет нужное содержимое, ничего не делаем
+		} else if common.IsNoTextInMessageError(err) {
+			// Сообщение содержит медиа (фото и т.д.)
+			// В Telegram Bot API нельзя превратить медиа-сообщение в текстовое через редактирование
+			// Приходится удалить и отправить новое
+			h.Logger.Info("Message has no text, deleting and sending new",
+				zap.Int64("chat_id", msg.Chat.ID),
+				zap.Int("message_id", msg.ID),
+				zap.String("error", errStr))
+			// Удаляем старое сообщение (игнорируем ошибку удаления)
+			b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+				ChatID:    msg.Chat.ID,
+				MessageID: msg.ID,
+			})
+			// Отправляем новое сообщение
+			_, sendErr := b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID:      msg.Chat.ID,
+				Text:        text,
+				ParseMode:   models.ParseModeHTML,
+				ReplyMarkup: keyboard,
+			})
+			if sendErr != nil {
+				h.Logger.Error("Failed to send new message", zap.Error(sendErr))
+			}
+		} else {
+			h.Logger.Error("Failed to edit message",
+				zap.Error(err),
+				zap.String("error_string", errStr),
+				zap.Bool("is_no_text_error", common.IsNoTextInMessageError(err)))
+		}
 	}
 
 	common.AnswerCallback(ctx, b, callback.ID, "")
@@ -309,6 +299,11 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		return
 	}
 
+	showEditSubjectScreen(ctx, b, callback, h, subjectID)
+}
+
+// showEditSubjectScreen отображает экран редактирования предмета
+func showEditSubjectScreen(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler, subjectID int64) {
 	h.Logger.Info("Editing subject", zap.Int64("subject_id", subjectID))
 
 	msg := common.GetMessageFromCallback(callback)
@@ -331,56 +326,10 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		zap.Int64("subject_id", subjectID),
 		zap.String("name", subject.Name))
 
-	price := float64(subject.Price) / 100
-	statusText := "Активен ✅"
-	if !subject.IsActive {
-		statusText = "Неактивен ⏸"
-	}
-	approvalText := "Нет ❌"
-	if subject.RequiresBookingApproval {
-		approvalText = "Да ✅"
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildEditSubjectScreen(subject)
 
-	text := fmt.Sprintf(
-		"🛠 <b>Редактирование предмета</b>\n\n"+
-			"📚 Название: %s\n"+
-			"📝 Описание: %s\n"+
-			"💰 Цена: %.2f ₽\n"+
-			"⏱ Длительность: %d мин\n"+
-			"⏳ Требуется одобрение: %s\n"+
-			"📊 Статус: %s\n\n"+
-			"Выберите, что хотите изменить:",
-		subject.Name,
-		subject.Description,
-		price,
-		subject.Duration,
-		approvalText,
-		statusText,
-	)
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "📝 Название", CallbackData: fmt.Sprintf("edit_field_name:%d", subjectID)},
-				{Text: "📄 Описание", CallbackData: fmt.Sprintf("edit_field_desc:%d", subjectID)},
-			},
-			{
-				{Text: "💰 Цена", CallbackData: fmt.Sprintf("edit_field_price:%d", subjectID)},
-				{Text: "⏱ Длительность", CallbackData: fmt.Sprintf("edit_field_duration:%d", subjectID)},
-			},
-			{
-				{Text: "⏳ Требуется одобрение", CallbackData: fmt.Sprintf("toggle_approval:%d", subjectID)},
-			},
-			{
-				{Text: "📊 Изменить статус", CallbackData: fmt.Sprintf("toggle_subject:%d", subjectID)},
-			},
-			{
-				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subjectID)},
-			},
-		},
-	}
-
-	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+	_, err = b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
 		Text:        text,
@@ -388,15 +337,59 @@ func HandleEditSubject(ctx context.Context, b *bot.Bot, callback *models.Callbac
 		ReplyMarkup: keyboard,
 	})
 
+	if err != nil {
+		// Игнорируем ошибку "message is not modified" - это не настоящая ошибка
+		if common.IsMessageNotModifiedError(err) {
+			// Сообщение уже имеет нужное содержимое, ничего не делаем
+		} else if common.IsNoTextInMessageError(err) {
+			// Сообщение содержит медиа (фото и т.д.)
+			// В Telegram Bot API нельзя превратить медиа-сообщение в текстовое через редактирование
+			// Приходится удалить и отправить новое
+			h.Logger.Info("Message has no text, deleting and sending new",
+				zap.Int64("chat_id", msg.Chat.ID),
+				zap.Int("message_id", msg.ID))
+			// Удаляем старое сообщение (игнорируем ошибку удаления)
+			b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+				ChatID:    msg.Chat.ID,
+				MessageID: msg.ID,
+			})
+			// Отправляем новое сообщение
+			_, sendErr := b.SendMessage(ctx, &bot.SendMessageParams{
+				ChatID:      msg.Chat.ID,
+				Text:        text,
+				ParseMode:   models.ParseModeHTML,
+				ReplyMarkup: keyboard,
+			})
+			if sendErr != nil {
+				h.Logger.Error("Failed to send new message", zap.Error(sendErr))
+			}
+		} else {
+			h.Logger.Error("Failed to edit message in showEditSubjectScreen", zap.Error(err))
+		}
+	}
+
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
 
 // HandleToggleSubject переключает активность предмета
 func HandleToggleSubject(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *callbacktypes.Handler) {
-	subjectID, err := common.ParseIDFromCallback(callback.Data)
-	if err != nil {
+	// Формат: toggle_subject:{id}:source (source = "list" или "edit")
+	parts := strings.Split(callback.Data, ":")
+	if len(parts) < 2 {
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный формат")
 		return
+	}
+
+	subjectID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверный ID")
+		return
+	}
+
+	// Определяем источник (откуда пришли)
+	source := "list" // по умолчанию
+	if len(parts) >= 3 {
+		source = parts[2]
 	}
 
 	telegramID := callback.From.ID
@@ -420,15 +413,22 @@ func HandleToggleSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 
 	common.AnswerCallbackAlert(ctx, b, callback.ID, fmt.Sprintf("✅ Предмет %s", statusText))
 
-	// Обновляем список предметов
-	msg := common.GetMessageFromCallback(callback)
-	if msg != nil {
-		h.HandleMySubjects(ctx, b, &models.Update{
-			Message: &models.Message{
-				Chat: models.Chat{ID: msg.Chat.ID},
-				From: &callback.From,
-			},
-		})
+	// Возвращаемся туда, откуда пришли
+	if source == "edit" {
+		// Возвращаемся к экрану редактирования (передаем subjectID напрямую)
+		showEditSubjectScreen(ctx, b, callback, h, subjectID)
+	} else {
+		// Возвращаемся к списку предметов
+		msg := common.GetMessageFromCallback(callback)
+		if msg != nil {
+			h.HandleMySubjects(ctx, b, &models.Update{
+				CallbackQuery: callback,
+				Message: &models.Message{
+					Chat: models.Chat{ID: msg.Chat.ID},
+					From: &callback.From,
+				},
+			}, msg.ID)
+		}
 	}
 }
 
@@ -459,32 +459,8 @@ func HandleDeleteSubject(ctx context.Context, b *bot.Bot, callback *models.Callb
 		bookings = []*model.Booking{}
 	}
 
-	warningText := ""
-	if len(bookings) > 0 {
-		warningText = fmt.Sprintf("\n\n⚠️ **ВНИМАНИЕ!** У этого предмета есть %d активных бронирований.\n"+
-			"Все студенты будут уведомлены об отмене.", len(bookings))
-	}
-
-	text := fmt.Sprintf(
-		"❓ Вы уверены, что хотите удалить предмет <b>%s</b>?\n\n"+
-			"Это действие удалит:\n"+
-			"• Сам предмет\n"+
-			"• Все временные слоты\n"+
-			"• Все связанные бронирования%s",
-		subject.Name,
-		warningText,
-	)
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "✅ Да, удалить", CallbackData: fmt.Sprintf("confirm_delete:%d", subjectID)},
-			},
-			{
-				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subjectID)},
-			},
-		},
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildDeleteSubjectConfirmScreen(subject, len(bookings))
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
@@ -592,100 +568,16 @@ func HandleSubjectsPage(ctx context.Context, b *bot.Bot, callback *models.Callba
 		return
 	}
 
-	// Пагинация
-	const pageSize = 10
-	pageInt := int(page)
-
-	text := fmt.Sprintf("📚 Ваши предметы (всего: %d):\n\n", len(subjects))
-	var buttons [][]models.InlineKeyboardButton
-
-	// Вычисляем индексы для текущей страницы
-	startIdx := pageInt * pageSize
-	endIdx := startIdx + pageSize
-	if endIdx > len(subjects) {
-		endIdx = len(subjects)
-	}
-
 	// Проверяем корректность страницы
-	if startIdx >= len(subjects) {
+	pageInt := int(page)
+	const pageSize = 10
+	if pageInt*pageSize >= len(subjects) {
 		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Неверная страница")
 		return
 	}
 
-	// Показываем предметы текущей страницы
-	for i := startIdx; i < endIdx; i++ {
-		subject := subjects[i]
-		statusEmoji := "✅"
-		statusText := "Активен"
-
-		if !subject.IsActive {
-			statusEmoji = "⏸"
-			statusText = "Неактивен"
-		}
-
-		text += fmt.Sprintf(
-			"%d. %s %s\n"+
-				"   💰 Цена: %.2f ₽\n"+
-				"   ⏱ Длительность: %d мин\n"+
-				"   📝 %s\n"+
-				"   Статус: %s\n\n",
-			i+1,
-			statusEmoji,
-			subject.Name,
-			float64(subject.Price)/100,
-			subject.Duration,
-			subject.Description,
-			statusText,
-		)
-
-		// Кнопки для каждого предмета
-		buttons = append(buttons, []models.InlineKeyboardButton{
-			{Text: fmt.Sprintf("📝 %s", subject.Name), CallbackData: fmt.Sprintf("view_subject:%d", subject.ID)},
-			{Text: "✏️", CallbackData: fmt.Sprintf("edit_subject:%d", subject.ID)},
-			{Text: statusEmoji, CallbackData: fmt.Sprintf("toggle_subject:%d", subject.ID)},
-		})
-	}
-
-	// Добавляем подсказку
-	text += "\n💡 Совет: Создайте временные слоты через /myschedule чтобы студенты могли записываться!\n\n"
-
-	// Кнопки пагинации
-	totalPages := (len(subjects) + pageSize - 1) / pageSize
-	if totalPages > 1 {
-		var paginationButtons []models.InlineKeyboardButton
-
-		// Кнопка "Предыдущая" только если не первая страница
-		if pageInt > 0 {
-			paginationButtons = append(paginationButtons,
-				models.InlineKeyboardButton{Text: "⬅️ Предыдущая", CallbackData: fmt.Sprintf("subjects_page:%d", pageInt-1)})
-		}
-
-		// Показываем номер страницы
-		paginationButtons = append(paginationButtons,
-			models.InlineKeyboardButton{Text: fmt.Sprintf("📄 %d/%d", pageInt+1, totalPages), CallbackData: "noop"})
-
-		// Кнопка "Следующая" только если не последняя страница
-		if pageInt < totalPages-1 {
-			paginationButtons = append(paginationButtons,
-				models.InlineKeyboardButton{Text: "Следующая ➡️", CallbackData: fmt.Sprintf("subjects_page:%d", pageInt+1)})
-		}
-
-		buttons = append(buttons, paginationButtons)
-	}
-
-	// Кнопка создать новый предмет
-	buttons = append(buttons, []models.InlineKeyboardButton{
-		{Text: "➕ Создать новый предмет", CallbackData: "create_first_subject"},
-	})
-
-	// Кнопка для быстрого перехода к расписанию
-	buttons = append(buttons, []models.InlineKeyboardButton{
-		{Text: "📅 Управление расписанием", CallbackData: "view_schedule"},
-	})
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: buttons,
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildSubjectsListScreen(subjects, pageInt)
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,

@@ -17,6 +17,7 @@ type ScheduleSlot struct {
 	StartTime time.Time  `json:"start_time"`
 	EndTime   time.Time  `json:"end_time"`
 	Status    SlotStatus `json:"status"`
-	StudentID *int64     `json:"student_id"` // указатель - может быть nil
+	StudentID *int64     `json:"student_id"`        // указатель - может быть nil
+	Comment   *string    `json:"comment,omitempty"` // комментарий преподавателя
 	CreatedAt time.Time  `json:"created_at"`
 }

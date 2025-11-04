@@ -671,6 +671,96 @@ func (s *TeacherService) CancelBookingBySlot(ctx context.Context, slotID int64, 
 	return nil
 }
 
+// MarkSlotBusy помечает слот как занятый без привязки к студенту
+func (s *TeacherService) MarkSlotBusy(ctx context.Context, slotID, teacherID int64) error {
+	return s.MarkSlotBusyWithComment(ctx, slotID, teacherID, nil)
+}
+
+// MarkSlotBusyWithComment помечает слот как занятый с комментарием
+func (s *TeacherService) MarkSlotBusyWithComment(ctx context.Context, slotID, teacherID int64, comment *string) error {
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get slot: %w", err)
+	}
+
+	if slot == nil {
+		return fmt.Errorf("slot not found")
+	}
+
+	if slot.TeacherID != teacherID {
+		return fmt.Errorf("slot does not belong to teacher")
+	}
+
+	if slot.Status != model.SlotStatusFree {
+		return fmt.Errorf("slot is not free")
+	}
+
+	err = s.slotRepo.MarkBusyWithComment(ctx, slotID, comment)
+	if err != nil {
+		return fmt.Errorf("mark slot busy: %w", err)
+	}
+
+	s.logger.Info("Slot marked as busy",
+		zap.Int64("slot_id", slotID),
+		zap.Int64("teacher_id", teacherID),
+		zap.Bool("has_comment", comment != nil))
+
+	return nil
+}
+
+// AssignSlotToStudent закрепляет слот за конкретным студентом (использует существующий Book)
+func (s *TeacherService) AssignSlotToStudent(ctx context.Context, slotID, teacherID, studentID int64) error {
+	slot, err := s.slotRepo.GetByID(ctx, slotID)
+	if err != nil {
+		return fmt.Errorf("get slot: %w", err)
+	}
+
+	if slot == nil {
+		return fmt.Errorf("slot not found")
+	}
+
+	if slot.TeacherID != teacherID {
+		return fmt.Errorf("slot does not belong to teacher")
+	}
+
+	if slot.Status != model.SlotStatusFree {
+		return fmt.Errorf("slot is not free")
+	}
+
+	// Используем существующий метод Book (он делает то же самое)
+	err = s.slotRepo.Book(ctx, slotID, studentID)
+	if err != nil {
+		return fmt.Errorf("assign slot to student: %w", err)
+	}
+
+	// Создаем запись в bookings для учета
+	subject, err := s.subjectRepo.GetByID(ctx, slot.SubjectID)
+	if err == nil && subject != nil {
+		bookingStatus := model.BookingStatusConfirmed
+		if subject.RequiresBookingApproval {
+			bookingStatus = model.BookingStatusPending
+		}
+
+		booking := &model.Booking{
+			StudentID: studentID,
+			TeacherID: teacherID,
+			SubjectID: slot.SubjectID,
+			SlotID:    slotID,
+			Status:    bookingStatus,
+		}
+
+		// Игнорируем ошибку создания booking - это не критично
+		_ = s.bookingRepo.Create(ctx, booking)
+	}
+
+	s.logger.Info("Slot assigned to student",
+		zap.Int64("slot_id", slotID),
+		zap.Int64("teacher_id", teacherID),
+		zap.Int64("student_id", studentID))
+
+	return nil
+}
+
 // GetRecurringSchedulesByGroupID получает все recurring schedules по group_id
 func (s *TeacherService) GetRecurringSchedulesByGroupID(ctx context.Context, groupID int64) ([]*model.RecurringSchedule, error) {
 	return s.recurringRepo.GetByGroupID(ctx, groupID)

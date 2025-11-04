@@ -62,34 +62,9 @@ func HandleBookLesson(ctx context.Context, b *bot.Bot, callback *models.Callback
 
 	b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: msg.Chat.ID, MessageID: msg.ID})
 
-	// Определяем текст статуса в зависимости от фактического статуса
-	statusText := "Подтверждена ✅"
-	additionalInfo := "Учитель получил уведомление о вашей записи."
-
-	if booking.Status == model.BookingStatusPending {
-		statusText = "Ожидает одобрения ⏳"
-		additionalInfo = "Учитель получил запрос на одобрение.\nВы получите уведомление после проверки."
-	}
-
-	text := fmt.Sprintf(
-		"✅ Запись успешно создана!\n\n"+
-			"📝 Запись #%d\n"+
-			"📅 Статус: %s\n"+
-			"📍 ID слота: %d\n\n"+
-			"%s\n"+
-			"Детали занятия будут доступны в /mybookings",
-		booking.ID,
-		statusText,
-		slotID,
-		additionalInfo,
-	)
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{{Text: "📅 Мои записи", CallbackData: "back_to_main"}},
-			{{Text: "➕ Записаться ещё", CallbackData: "book_another"}},
-		},
-	}
+	// Используем билдер экрана
+	isPending := booking.Status == model.BookingStatusPending
+	text, keyboard := common.BuildBookingSuccessScreen(booking.ID, slotID, isPending)
 
 	b.SendMessage(ctx, &bot.SendMessageParams{ChatID: msg.Chat.ID, Text: text, ReplyMarkup: keyboard})
 	common.AnswerCallback(ctx, b, callback.ID, "✅ Запись создана")

@@ -77,3 +77,16 @@ func IsMessageNotModifiedError(err error) bool {
 	}
 	return strings.Contains(err.Error(), "message is not modified")
 }
+
+// IsNoTextInMessageError проверяет является ли ошибка "there is no text in the message to edit"
+// Это означает, что сообщение содержит медиа (фото, документ и т.д.) и его нельзя отредактировать через EditMessageText
+func IsNoTextInMessageError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// Проверяем различные варианты формулировки этой ошибки
+	// "bad request, Bad Request: there is no text in the message to edit"
+	return strings.Contains(errStr, "no text in the message") ||
+		strings.Contains(errStr, "there is no text")
+}

@@ -45,6 +45,7 @@ func (h *Handlers) HandleStart(ctx context.Context, b *bot.Bot, update *models.U
 			"Добро пожаловать в Scheduler Bot - бот для записи на занятия к учителям.\n\n"+
 			"Доступные команды:\n"+
 			"/subjects - Посмотреть все предметы\n"+
+			"/findteachers - Найти публичных учителей\n"+
 			"/mybookings - Мои записи\n"+
 			"/help - Справка\n\n"+
 			"Для учителей:\n"+
@@ -164,6 +165,8 @@ func (h *Handlers) HandleTextMessage(ctx context.Context, b *bot.Bot, update *mo
 		h.handleEditSubjectDuration(ctx, b, update)
 	case state.StateEnteringInviteCode:
 		h.handleEnteringInviteCode(ctx, b, update)
+	case state.StateMarkSlotBusyComment:
+		h.handleMarkSlotBusyComment(ctx, b, update)
 	case "custom_slot_time":
 		h.handleCustomSlotTime(ctx, b, update)
 	default:
@@ -314,5 +317,134 @@ func (h *Handlers) processCustomSlotTime(ctx context.Context, b *bot.Bot, update
 		ChatID:    update.Message.Chat.ID,
 		Text:      text,
 		ParseMode: models.ParseModeHTML,
+	})
+}
+
+// handleMarkSlotBusyComment обрабатывает ввод комментария для пометки слота занятым
+func (h *Handlers) handleMarkSlotBusyComment(ctx context.Context, b *bot.Bot, update *models.Update) {
+	telegramID := update.Message.From.ID
+	commentText := strings.TrimSpace(update.Message.Text)
+
+	h.logger.Info("Processing mark slot busy comment",
+		zap.Int64("telegram_id", telegramID),
+		zap.String("comment", commentText))
+
+	// Получаем сохранённые данные
+	slotIDData, ok := h.stateManager.GetData(telegramID, "slot_id")
+	if !ok {
+		h.logger.Error("Missing slot_id in state", zap.Int64("telegram_id", telegramID))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка: данные не найдены. Начните заново.",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	slotID, ok := slotIDData.(int64)
+	if !ok {
+		h.logger.Error("Invalid slot_id type", zap.Any("data", slotIDData))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка: неверный формат данных.",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Получаем пользователя
+	user, err := h.userService.GetByTelegramID(ctx, telegramID)
+	if err != nil || user == nil {
+		h.logger.Error("Failed to get user", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка получения данных пользователя.",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Подготавливаем комментарий (если пустой, то nil)
+	var comment *string
+	if commentText != "" && commentText != "/skip" {
+		comment = &commentText
+	}
+
+	// Получаем subject_id и date для возврата ДО очистки состояния
+	subjectIDData, hasSubjectID := h.stateManager.GetData(telegramID, "subject_id")
+	dateData, hasDate := h.stateManager.GetData(telegramID, "date")
+
+	// Помечаем слот как занятый с комментарием
+	err = h.teacherService.MarkSlotBusyWithComment(ctx, slotID, user.ID, comment)
+	if err != nil {
+		h.logger.Error("Failed to mark slot busy with comment", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Не удалось пометить слот как занятый.",
+		})
+		h.stateManager.ClearState(telegramID)
+		return
+	}
+
+	// Очищаем состояние
+	h.stateManager.ClearState(telegramID)
+
+	// Получаем информацию о слоте для отображения
+	slot, err := h.teacherService.GetSlotByID(ctx, slotID)
+	if err != nil || slot == nil {
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "✅ Слот помечен как занятый.",
+		})
+		return
+	}
+
+	// Формируем сообщение об успехе
+	timeStr := fmt.Sprintf("%s - %s", slot.StartTime.Format("15:04"), slot.EndTime.Format("15:04"))
+	text := fmt.Sprintf("✅ <b>Слот помечен как занятый</b>\n\n"+
+		"🕐 Время: %s\n"+
+		"📅 Дата: %s\n",
+		timeStr,
+		slot.StartTime.Format("02.01.2006"))
+
+	if comment != nil {
+		text += fmt.Sprintf("📝 Комментарий: %s\n", *comment)
+	}
+
+	// Формируем кнопку возврата, если есть данные
+	var keyboard *models.InlineKeyboardMarkup
+	if hasSubjectID && hasDate {
+		subjectIDStr, _ := subjectIDData.(string)
+		dateStr, _ := dateData.(string)
+		// Получаем weekday из даты слота
+		slot, err := h.teacherService.GetSlotByID(ctx, slotID)
+		if err == nil && slot != nil {
+			weekdayName := slot.StartTime.Weekday().String()
+			// Преобразуем английское название в русское
+			weekdayMap := map[string]string{
+				"Monday":    "Понедельник",
+				"Tuesday":   "Вторник",
+				"Wednesday": "Среда",
+				"Thursday":  "Четверг",
+				"Friday":    "Пятница",
+				"Saturday":  "Суббота",
+				"Sunday":    "Воскресенье",
+			}
+			if ruWeekday, ok := weekdayMap[weekdayName]; ok {
+				weekdayName = ruWeekday
+			}
+			keyboard = &models.InlineKeyboardMarkup{
+				InlineKeyboard: [][]models.InlineKeyboardButton{
+					{{Text: "⬅️ Вернуться к расписанию", CallbackData: fmt.Sprintf("view_schedule_day:%s:%s:%s", subjectIDStr, dateStr, weekdayName)}},
+				},
+			}
+		}
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      update.Message.Chat.ID,
+		Text:        text,
+		ParseMode:   models.ParseModeHTML,
+		ReplyMarkup: keyboard,
 	})
 }

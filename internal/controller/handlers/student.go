@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks"
+	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
 	"github.com/Freeeeeet/scheduler_bot/internal/model"
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -20,25 +21,154 @@ func (h *Handlers) HandleSubjects(ctx context.Context, b *bot.Bot, update *model
 	h.logger.Info("HandleSubjects called",
 		zap.Int64("user_id", update.Message.From.ID))
 
-	text := "📚 *Предметы и учителя*\n\n" +
-		"Выберите категорию:\n\n" +
-		"🎓 *Мои учителя* - учителя, к которым у вас есть доступ\n" +
-		"🌍 *Публичные учителя* - доступны всем студентам\n" +
-		"🔍 *Найти учителя* - по коду приглашения или заявке\n" +
-		"📋 *Мои заявки* - статус ваших запросов на доступ"
-
-	buttons := [][]models.InlineKeyboardButton{
-		{{Text: "🎓 Мои учителя", CallbackData: "my_teachers"}},
-		{{Text: "🌍 Публичные учителя", CallbackData: "public_teachers"}},
-		{{Text: "🔍 Найти учителя", CallbackData: "find_teacher"}},
-		{{Text: "📋 Мои заявки", CallbackData: "my_requests"}},
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildSubjectCategoriesScreen()
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      update.Message.Chat.ID,
 		Text:        text,
 		ParseMode:   models.ParseModeMarkdown,
-		ReplyMarkup: &models.InlineKeyboardMarkup{InlineKeyboard: buttons},
+		ReplyMarkup: keyboard,
+	})
+}
+
+// HandleFindTeachers обрабатывает команду /findteachers
+func (h *Handlers) HandleFindTeachers(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.Message == nil {
+		return
+	}
+
+	h.logger.Info("HandleFindTeachers called",
+		zap.Int64("user_id", update.Message.From.ID))
+
+	// Получаем публичных учителей
+	teachers, err := h.accessService.GetPublicTeachers(ctx)
+	if err != nil {
+		h.logger.Error("Failed to get public teachers", zap.Error(err))
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "❌ Ошибка при загрузке учителей",
+		})
+		return
+	}
+
+	const itemsPerPage = 5
+	page := 1
+	totalTeachers := len(teachers)
+	totalPages := (totalTeachers + itemsPerPage - 1) / itemsPerPage
+
+	// Формируем текст
+	text := "🌍 *Публичные учителя*\n\n"
+	if totalTeachers == 0 {
+		text += "Пока нет публичных учителей.\n\n"
+		text += "💡 Учителя могут сделать свой профиль публичным в настройках доступа."
+	} else {
+		text += fmt.Sprintf("Доступно учителей: %d\n", totalTeachers)
+		text += fmt.Sprintf("Страница %d из %d\n\n", page, totalPages)
+
+		// Вычисляем диапазон для текущей страницы
+		start := (page - 1) * itemsPerPage
+		end := start + itemsPerPage
+		if end > totalTeachers {
+			end = totalTeachers
+		}
+
+		pageTeachers := teachers[start:end]
+		for i, teacher := range pageTeachers {
+			name := teacher.FirstName
+			if teacher.LastName != "" {
+				name += " " + teacher.LastName
+			}
+
+			// Получаем предметы учителя
+			subjects, _ := h.teacherService.GetTeacherSubjects(ctx, teacher.ID)
+			subjectNames := ""
+			if len(subjects) > 0 {
+				for j, subj := range subjects {
+					if subj.IsActive {
+						if j > 0 {
+							subjectNames += ", "
+						}
+						subjectNames += subj.Name
+						if j >= 2 { // Показываем максимум 3 предмета
+							subjectNames += "..."
+							break
+						}
+					}
+				}
+			}
+
+			text += fmt.Sprintf("%d. *%s*\n", start+i+1, name)
+			if subjectNames != "" {
+				text += fmt.Sprintf("   📚 %s\n", subjectNames)
+			}
+		}
+	}
+
+	// Формируем клавиатуру
+	var buttons [][]models.InlineKeyboardButton
+
+	// Добавляем кнопки учителей на текущей странице
+	if totalTeachers > 0 {
+		start := (page - 1) * itemsPerPage
+		end := start + itemsPerPage
+		if end > totalTeachers {
+			end = totalTeachers
+		}
+
+		pageTeachers := teachers[start:end]
+		for _, teacher := range pageTeachers {
+			name := teacher.FirstName
+			if teacher.LastName != "" {
+				name += " " + teacher.LastName
+			}
+			if len(name) > 30 {
+				name = name[:30] + "..."
+			}
+			buttons = append(buttons, []models.InlineKeyboardButton{
+				{Text: fmt.Sprintf("👤 %s", name), CallbackData: fmt.Sprintf("teacher_profile:%d", teacher.ID)},
+			})
+		}
+
+		// Пагинация
+		if totalPages > 1 {
+			paginationRow := []models.InlineKeyboardButton{}
+			if page > 1 {
+				paginationRow = append(paginationRow, models.InlineKeyboardButton{
+					Text: "◀️ Назад", CallbackData: fmt.Sprintf("public_teachers_page:%d", page-1),
+				})
+			}
+			paginationRow = append(paginationRow, models.InlineKeyboardButton{
+				Text: fmt.Sprintf("%d/%d", page, totalPages), CallbackData: "noop",
+			})
+			if page < totalPages {
+				paginationRow = append(paginationRow, models.InlineKeyboardButton{
+					Text: "Вперёд ▶️", CallbackData: fmt.Sprintf("public_teachers_page:%d", page+1),
+				})
+			}
+			buttons = append(buttons, paginationRow)
+		}
+	}
+
+	// Кнопка назад к меню (всегда добавляем, даже если нет учителей)
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⬅️ К списку предметов", CallbackData: "subjects_menu"},
+	})
+
+	keyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	// Всегда отправляем сообщение
+	h.logger.Info("Sending findteachers response",
+		zap.Int("total_teachers", totalTeachers),
+		zap.Int("buttons_count", len(buttons)))
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      update.Message.Chat.ID,
+		Text:        text,
+		ParseMode:   models.ParseModeMarkdown,
+		ReplyMarkup: keyboard,
 	})
 }
 
@@ -91,18 +221,12 @@ func (h *Handlers) handleStudentBookings(ctx context.Context, b *bot.Bot, update
 	}
 
 	if len(bookings) == 0 {
-		// Если нет записей, показываем кнопку для записи
-		keyboard := &models.InlineKeyboardMarkup{
-			InlineKeyboard: [][]models.InlineKeyboardButton{
-				{
-					{Text: "📚 Посмотреть предметы", CallbackData: callbacks.BookAnother},
-				},
-			},
-		}
+		// Используем билдер экрана
+		text, keyboard := common.BuildEmptyBookingsScreen()
 
 		b.SendMessage(ctx, &bot.SendMessageParams{
 			ChatID:      update.Message.Chat.ID,
-			Text:        "📅 У вас пока нет записей на занятия.\n\nПосмотрите доступные предметы и запишитесь!",
+			Text:        text,
 			ReplyMarkup: keyboard,
 		})
 		return

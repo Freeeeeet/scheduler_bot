@@ -206,6 +206,18 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 		schedule.HandleRestoreSlot(ctx, b, callback, h)
 	case strings.HasPrefix(data, "cancel_booking_from_slot:"):
 		schedule.HandleCancelBookingFromSlot(ctx, b, callback, h)
+	case strings.HasPrefix(data, "slot_action:"):
+		schedule.HandleSlotAction(ctx, b, callback, h)
+	case strings.HasPrefix(data, "mark_busy_simple:"):
+		schedule.HandleMarkBusySimple(ctx, b, callback, h)
+	case strings.HasPrefix(data, "mark_busy_comment:"):
+		schedule.HandleMarkBusyComment(ctx, b, callback, h)
+	case strings.HasPrefix(data, "mark_slot_busy:"):
+		schedule.HandleMarkSlotBusy(ctx, b, callback, h)
+	case strings.HasPrefix(data, "assign_slot_student:"):
+		schedule.HandleAssignSlotStudent(ctx, b, callback, h)
+	case strings.HasPrefix(data, "assign_slot_to:"):
+		schedule.HandleAssignSlotTo(ctx, b, callback, h)
 	case strings.HasPrefix(data, "manage_temporary:"):
 		schedule.HandleManageTemporary(ctx, b, callback, h)
 	case data == "back_to_myschedule":
@@ -366,9 +378,14 @@ func Route(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, h *c
 	case strings.HasPrefix(data, "revoke_access:"):
 		teacher.HandleRevokeStudentAccess(ctx, b, callback, h)
 	case data == "mysubjects":
-		// Back to my subjects - will be handled in the main command handler
+		// Back to my subjects - редактируем существующее сообщение
 		if h.HandleMySubjects != nil {
-			h.HandleMySubjects(ctx, b, &models.Update{CallbackQuery: callback})
+			msg := common.GetMessageFromCallback(callback)
+			if msg != nil {
+				h.HandleMySubjects(ctx, b, &models.Update{CallbackQuery: callback}, msg.ID)
+			} else {
+				h.HandleMySubjects(ctx, b, &models.Update{CallbackQuery: callback})
+			}
 		}
 
 	// ===== Unknown Callback =====

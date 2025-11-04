@@ -11,6 +11,7 @@ type Handlers struct {
 	userService    *service.UserService
 	bookingService *service.BookingService
 	teacherService *service.TeacherService
+	accessService  *service.StudentAccessService
 	stateManager   *state.Manager
 	logger         *zap.Logger
 }
@@ -20,6 +21,7 @@ func NewHandlers(
 	userService *service.UserService,
 	bookingService *service.BookingService,
 	teacherService *service.TeacherService,
+	accessService *service.StudentAccessService,
 	stateManager *state.Manager,
 	logger *zap.Logger,
 ) *Handlers {
@@ -27,6 +29,7 @@ func NewHandlers(
 		userService:    userService,
 		bookingService: bookingService,
 		teacherService: teacherService,
+		accessService:  accessService,
 		stateManager:   stateManager,
 		logger:         logger,
 	}

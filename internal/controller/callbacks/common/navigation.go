@@ -98,20 +98,16 @@ func HandleBackToSubjects(ctx context.Context, b *bot.Bot, callback *models.Call
 		return
 	}
 
-	// Удаляем сообщение и вызываем HandleMySubjects
-	b.DeleteMessage(ctx, &bot.DeleteMessageParams{
-		ChatID:    msg.Chat.ID,
-		MessageID: msg.ID,
-	})
-
+	// Редактируем сообщение вместо удаления
 	update := &models.Update{
+		CallbackQuery: callback,
 		Message: &models.Message{
 			Chat: models.Chat{ID: msg.Chat.ID},
 			From: &callback.From,
 		},
 	}
 
-	h.HandleMySubjects(ctx, b, update)
+	h.HandleMySubjects(ctx, b, update, msg.ID)
 	AnswerCallback(ctx, b, callback.ID, "")
 }
 

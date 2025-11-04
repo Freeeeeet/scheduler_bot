@@ -56,17 +56,20 @@ func HandleTeacherSettings(ctx context.Context, b *bot.Bot, callback *models.Cal
 	kb.Row(keyboard.Button(fmt.Sprintf("👥 Мои студенты (%d)", studentsCount), "view_my_students"))
 	kb.Row(keyboard.BackButton("mysubjects"))
 
-	common.AnswerCallback(ctx, b, callback.ID, "")
 	msg := common.GetMessageFromCallback(callback)
-	if msg != nil {
-		b.EditMessageText(ctx, &bot.EditMessageTextParams{
-			ChatID:      msg.Chat.ID,
-			MessageID:   msg.ID,
-			Text:        text,
-			ParseMode:   models.ParseModeMarkdown,
-			ReplyMarkup: kb.Build(),
-		})
+	if msg == nil {
+		common.AnswerCallbackAlert(ctx, b, callback.ID, "❌ Ошибка получения сообщения")
+		return
 	}
+
+	common.AnswerCallback(ctx, b, callback.ID, "")
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      msg.Chat.ID,
+		MessageID:   msg.ID,
+		Text:        text,
+		ParseMode:   models.ParseModeMarkdown,
+		ReplyMarkup: kb.Build(),
+	})
 }
 
 // HandleTogglePublicStatus переключает публичность учителя

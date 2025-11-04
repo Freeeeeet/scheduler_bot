@@ -50,6 +50,7 @@ func NewBotController(
 		userService,
 		bookingService,
 		teacherService,
+		accessService,
 		stateManager,
 		logger,
 	)
@@ -88,12 +89,15 @@ func (c *BotController) RegisterHandlers(ctx context.Context) error {
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, c.handlers.HandleStart)
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, c.handlers.HandleHelp)
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/subjects", bot.MatchTypeExact, c.handlers.HandleSubjects)
+	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/findteachers", bot.MatchTypeExact, c.handlers.HandleFindTeachers)
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/mybookings", bot.MatchTypeExact, c.handlers.HandleMyBookings)
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/cancel", bot.MatchTypeExact, c.handlers.HandleCancel)
 
 	// Команды для учителей
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/becometeacher", bot.MatchTypeExact, c.handlers.HandleBecomeTeacher)
-	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/mysubjects", bot.MatchTypeExact, c.handlers.HandleMySubjects)
+	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/mysubjects", bot.MatchTypeExact, func(ctx context.Context, b *bot.Bot, update *models.Update) {
+		c.handlers.HandleMySubjects(ctx, b, update)
+	})
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/myschedule", bot.MatchTypeExact, c.handlers.HandleMySchedule)
 	c.bot.RegisterHandler(bot.HandlerTypeMessageText, "/createsubject", bot.MatchTypeExact, c.handlers.HandleCreateSubjectStart)
 

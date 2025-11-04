@@ -83,6 +83,11 @@ func (s *UserService) GetByID(ctx context.Context, id int64) (*model.User, error
 	return s.userRepo.GetByID(ctx, id)
 }
 
+// GetByIDs получает пользователей по списку ID
+func (s *UserService) GetByIDs(ctx context.Context, ids []int64) ([]*model.User, error) {
+	return s.userRepo.GetByIDs(ctx, ids)
+}
+
 // MakeTeacher делает пользователя учителем
 func (s *UserService) MakeTeacher(ctx context.Context, telegramID int64) error {
 	user, err := s.userRepo.GetByTelegramID(ctx, telegramID)

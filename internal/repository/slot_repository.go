@@ -46,7 +46,7 @@ func (r *SlotRepository) Create(ctx context.Context, slot *model.ScheduleSlot) e
 // GetByID получает слот по ID
 func (r *SlotRepository) GetByID(ctx context.Context, id int64) (*model.ScheduleSlot, error) {
 	query := `
-		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, created_at
+		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, comment, created_at
 		FROM schedule_slots
 		WHERE id = $1
 	`
@@ -60,6 +60,7 @@ func (r *SlotRepository) GetByID(ctx context.Context, id int64) (*model.Schedule
 		&slot.EndTime,
 		&slot.Status,
 		&slot.StudentID,
+		&slot.Comment,
 		&slot.CreatedAt,
 	)
 
@@ -76,7 +77,7 @@ func (r *SlotRepository) GetByID(ctx context.Context, id int64) (*model.Schedule
 // GetFreeSlots получает свободные слоты для предмета в заданном диапазоне времени
 func (r *SlotRepository) GetFreeSlots(ctx context.Context, subjectID int64, from, to time.Time) ([]*model.ScheduleSlot, error) {
 	query := `
-		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, created_at
+		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, comment, created_at
 		FROM schedule_slots
 		WHERE subject_id = $1
 		  AND status = 'free'
@@ -102,6 +103,7 @@ func (r *SlotRepository) GetFreeSlots(ctx context.Context, subjectID int64, from
 			&slot.EndTime,
 			&slot.Status,
 			&slot.StudentID,
+			&slot.Comment,
 			&slot.CreatedAt,
 		)
 		if err != nil {
@@ -116,7 +118,7 @@ func (r *SlotRepository) GetFreeSlots(ctx context.Context, subjectID int64, from
 // GetByTeacherID получает все слоты учителя
 func (r *SlotRepository) GetByTeacherID(ctx context.Context, teacherID int64, from, to time.Time) ([]*model.ScheduleSlot, error) {
 	query := `
-		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, created_at
+		SELECT id, teacher_id, subject_id, start_time, end_time, status, student_id, comment, created_at
 		FROM schedule_slots
 		WHERE teacher_id = $1
 		  AND start_time >= $2
@@ -141,6 +143,7 @@ func (r *SlotRepository) GetByTeacherID(ctx context.Context, teacherID int64, fr
 			&slot.EndTime,
 			&slot.Status,
 			&slot.StudentID,
+			&slot.Comment,
 			&slot.CreatedAt,
 		)
 		if err != nil {
@@ -163,6 +166,31 @@ func (r *SlotRepository) Book(ctx context.Context, slotID, studentID int64) erro
 	result, err := r.pool.Exec(ctx, query, studentID, slotID)
 	if err != nil {
 		return fmt.Errorf("book slot: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("slot not available or already booked")
+	}
+
+	return nil
+}
+
+// MarkBusy помечает слот как занятый без привязки к студенту (для преподавателя)
+func (r *SlotRepository) MarkBusy(ctx context.Context, slotID int64) error {
+	return r.MarkBusyWithComment(ctx, slotID, nil)
+}
+
+// MarkBusyWithComment помечает слот как занятый с комментарием
+func (r *SlotRepository) MarkBusyWithComment(ctx context.Context, slotID int64, comment *string) error {
+	query := `
+		UPDATE schedule_slots
+		SET status = 'booked', student_id = NULL, comment = $1
+		WHERE id = $2 AND status = 'free'
+	`
+
+	result, err := r.pool.Exec(ctx, query, comment, slotID)
+	if err != nil {
+		return fmt.Errorf("mark slot busy: %w", err)
 	}
 
 	if result.RowsAffected() == 0 {

@@ -51,5 +51,5 @@ type Handler struct {
 	// Функции-хэндлеры из основного контроллера
 	HandleSubjects   func(ctx context.Context, b *bot.Bot, update *models.Update)
 	HandleMySchedule func(ctx context.Context, b *bot.Bot, update *models.Update)
-	HandleMySubjects func(ctx context.Context, b *bot.Bot, update *models.Update)
+	HandleMySubjects func(ctx context.Context, b *bot.Bot, update *models.Update, messageID ...int)
 }

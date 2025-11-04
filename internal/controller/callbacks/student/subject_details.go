@@ -2,7 +2,6 @@ package student
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/callbacktypes"
 	"github.com/Freeeeeet/scheduler_bot/internal/controller/callbacks/common"
@@ -57,35 +56,8 @@ func HandleViewSubjectDetails(ctx context.Context, b *bot.Bot, callback *models.
 		}
 	}
 
-	approvalText := ""
-	if subject.RequiresBookingApproval {
-		approvalText = "\n⏳ Требуется одобрение учителя"
-	}
-
-	text := fmt.Sprintf(
-		"📚 **%s**\n\n"+
-			"👤 Преподаватель: %s\n"+
-			"💰 Цена: %.2f ₽\n"+
-			"⏱ Длительность: %d мин\n\n"+
-			"📝 Описание:\n%s%s",
-		subject.Name,
-		teacherName,
-		float64(subject.Price)/100,
-		subject.Duration,
-		subject.Description,
-		approvalText,
-	)
-
-	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "📅 Посмотреть расписание", CallbackData: fmt.Sprintf("view_schedule_subject:%d", subjectID)},
-			},
-			{
-				{Text: "⬅️ К списку предметов", CallbackData: "book_another"},
-			},
-		},
-	}
+	// Используем билдер экрана
+	text, keyboard := common.BuildStudentSubjectDetailsScreen(subject, teacherName)
 
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,

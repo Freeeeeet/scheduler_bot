@@ -96,7 +96,7 @@ func HandleViewSchedule(ctx context.Context, b *bot.Bot, callback *models.Callba
 		})
 	}
 
-	// Кнопка назад
+	// Кнопка назад - возвращаем к списку предметов
 	buttons = append(buttons, []models.InlineKeyboardButton{
 		{Text: "⬅️ К списку предметов", CallbackData: "back_to_subjects"},
 	})
@@ -255,7 +255,7 @@ func HandleViewSubjectSchedule(ctx context.Context, b *bot.Bot, callback *models
 				{Text: "📅 Временные расписания", CallbackData: fmt.Sprintf("manage_temporary:%d", subjectID)},
 			},
 			{
-				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("subject_schedule:%d", subjectID)},
+				{Text: "⬅️ Назад", CallbackData: fmt.Sprintf("view_subject:%d", subjectID)},
 			},
 		},
 	}

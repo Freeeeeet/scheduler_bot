@@ -1,8 +1,10 @@
 package schedule
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -155,6 +157,67 @@ func showScheduleCalendar(ctx context.Context, b *bot.Bot, callback *models.Call
 	weekNum := (offset / 7) + 1
 	text := fmt.Sprintf("📅 <b>Расписание: %s</b>\n\n📍 Неделя %d\n\nВыберите день для просмотра:", subject.Name, weekNum)
 
+	// Вычисляем даты недели для изображения (нормализуем к понедельнику)
+	startDate := now.AddDate(0, 0, offset)
+	normalizedStart := time.Date(startDate.Year(), startDate.Month(), startDate.Day(), 0, 0, 0, 0, startDate.Location())
+	daysSinceMonday := int(normalizedStart.Weekday()) - 1
+	if normalizedStart.Weekday() == time.Sunday {
+		daysSinceMonday = 6
+	}
+	weekStart := normalizedStart.AddDate(0, 0, -daysSinceMonday)
+	weekEnd := weekStart.AddDate(0, 0, 7) // воскресенье + 1 день для включения воскресенья
+
+	// Получаем слоты для недели
+	telegramID := callback.From.ID
+	user, err := h.UserService.GetByTelegramID(ctx, telegramID)
+	if err == nil && user != nil {
+		weekSlots, err := h.TeacherService.GetTeacherSchedule(ctx, user.ID, weekStart, weekEnd)
+		if err == nil {
+			// Собираем ID студентов для получения имен
+			studentIDsMap := make(map[int64]bool)
+			for _, slot := range weekSlots {
+				if slot.StudentID != nil {
+					studentIDsMap[*slot.StudentID] = true
+				}
+			}
+			studentIDs := make([]int64, 0, len(studentIDsMap))
+			for id := range studentIDsMap {
+				studentIDs = append(studentIDs, id)
+			}
+			studentNames := make(map[int64]string)
+			if len(studentIDs) > 0 {
+				students, _ := h.UserService.GetByIDs(ctx, studentIDs)
+				for _, student := range students {
+					name := student.FirstName
+					if student.LastName != "" {
+						name += " " + student.LastName
+					}
+					studentNames[student.ID] = name
+				}
+			}
+			// Генерируем изображение недели
+			imageData, err := common.GenerateWeekImage(weekStart, weekEnd, weekSlots, subjectID, studentNames)
+			if err == nil {
+				// Отправляем изображение с подписью
+				b.SendPhoto(ctx, &bot.SendPhotoParams{
+					ChatID:      msg.Chat.ID,
+					Photo:       &models.InputFileUpload{Filename: "week.png", Data: bytes.NewReader(imageData)},
+					Caption:     text,
+					ParseMode:   models.ParseModeHTML,
+					ReplyMarkup: keyboard,
+				})
+				// Удаляем старое сообщение
+				b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+					ChatID:    msg.Chat.ID,
+					MessageID: msg.ID,
+				})
+				common.AnswerCallback(ctx, b, callback.ID, "")
+				return
+			}
+		}
+	}
+
+	// Если не удалось сгенерировать изображение, отправляем текст
 	b.EditMessageText(ctx, &bot.EditMessageTextParams{
 		ChatID:      msg.Chat.ID,
 		MessageID:   msg.ID,
@@ -237,6 +300,21 @@ func HandleViewScheduleDay(ctx context.Context, b *bot.Bot, callback *models.Cal
 		}
 	}
 
+	// Вычисляем начало недели для изображения
+	daysSinceMonday := int(targetDate.Weekday()) - 1
+	if targetDate.Weekday() == time.Sunday {
+		daysSinceMonday = 6
+	}
+	weekStart := targetDate.AddDate(0, 0, -daysSinceMonday)
+	weekEnd := weekStart.AddDate(0, 0, 7)
+
+	// Получаем все слоты недели для изображения
+	weekSlots, err := h.TeacherService.GetTeacherSchedule(ctx, user.ID, weekStart, weekEnd)
+	if err != nil {
+		h.Logger.Error("Failed to get week schedule", zap.Error(err))
+		weekSlots = []*model.ScheduleSlot{}
+	}
+
 	text := fmt.Sprintf("📅 <b>Расписание на %s</b>\n\n", targetDate.Format("02.01.2006"))
 	text += fmt.Sprintf("📚 Предмет: <b>%s</b>\n", subject.Name)
 	text += fmt.Sprintf("📆 День: %s\n\n", weekday)
@@ -266,44 +344,109 @@ func HandleViewScheduleDay(ctx context.Context, b *bot.Bot, callback *models.Cal
 		if canceledSlots > 0 {
 			text += fmt.Sprintf("⚫️ Отменено: %d\n", canceledSlots)
 		}
-		text += "\n<b>Слоты:</b>\n"
+		text += "\n<b>Выберите слот для бронирования:</b>\n"
+	}
 
-		// Показываем все слоты
-		for _, slot := range slots {
-			statusEmoji := "🟢"
-			statusText := "Свободен"
-			switch slot.Status {
-			case model.SlotStatusBooked:
-				statusEmoji = "🔴"
-				statusText = "Забронирован"
-			case model.SlotStatusCanceled:
-				statusEmoji = "⚫️"
-				statusText = "Отменён"
+	// Создаем кнопки для слотов
+	var buttons [][]models.InlineKeyboardButton
+
+	// Сортируем слоты по времени
+	sort.Slice(slots, func(i, j int) bool {
+		return slots[i].StartTime.Before(slots[j].StartTime)
+	})
+
+	for _, slot := range slots {
+		statusEmoji := "🟢"
+		statusText := "Свободен"
+		switch slot.Status {
+		case model.SlotStatusBooked:
+			statusEmoji = "🔴"
+			statusText = "Забронирован"
+		case model.SlotStatusCanceled:
+			statusEmoji = "⚫️"
+			statusText = "Отменён"
+		}
+
+		buttonText := fmt.Sprintf("%s %s-%s", statusEmoji, slot.StartTime.Format("15:04"), slot.EndTime.Format("15:04"))
+
+		// Для свободных слотов показываем разные кнопки для преподавателя и студента
+		if slot.Status == model.SlotStatusFree {
+			if user.IsTeacher {
+				// Для преподавателя - одна кнопка, которая открывает экран выбора действия
+				buttons = append(buttons, []models.InlineKeyboardButton{
+					{Text: buttonText, CallbackData: fmt.Sprintf("slot_action:%d:%d:%s", slot.ID, subjectID, dateStr)},
+				})
+			} else {
+				// Для студента - кнопка для бронирования
+				buttons = append(buttons, []models.InlineKeyboardButton{
+					{Text: buttonText, CallbackData: fmt.Sprintf("book_lesson:%d", slot.ID)},
+				})
 			}
-
-			text += fmt.Sprintf("%s %s - %s (%s)\n",
-				statusEmoji,
-				slot.StartTime.Format("15:04"),
-				slot.EndTime.Format("15:04"),
-				statusText)
+		} else {
+			// Для забронированных/отмененных - неактивная кнопка
+			buttons = append(buttons, []models.InlineKeyboardButton{
+				{Text: buttonText + " (" + statusText + ")", CallbackData: "noop"},
+			})
 		}
 	}
 
+	// Кнопка назад
+	buttons = append(buttons, []models.InlineKeyboardButton{
+		{Text: "⬅️ Назад к календарю", CallbackData: fmt.Sprintf("view_schedule_calendar:%d", subjectID)},
+	})
+
 	keyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "⬅️ Назад к календарю", CallbackData: fmt.Sprintf("view_schedule_calendar:%d", subjectID)},
-			},
-		},
+		InlineKeyboard: buttons,
 	}
 
-	b.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID:      msg.Chat.ID,
-		MessageID:   msg.ID,
-		Text:        text,
-		ParseMode:   models.ParseModeHTML,
-		ReplyMarkup: keyboard,
-	})
+	// Собираем ID студентов для получения имен
+	studentIDsMap := make(map[int64]bool)
+	for _, slot := range weekSlots {
+		if slot.StudentID != nil {
+			studentIDsMap[*slot.StudentID] = true
+		}
+	}
+	studentIDs := make([]int64, 0, len(studentIDsMap))
+	for id := range studentIDsMap {
+		studentIDs = append(studentIDs, id)
+	}
+	studentNames := make(map[int64]string)
+	if len(studentIDs) > 0 {
+		students, _ := h.UserService.GetByIDs(ctx, studentIDs)
+		for _, student := range students {
+			name := student.FirstName
+			if student.LastName != "" {
+				name += " " + student.LastName
+			}
+			studentNames[student.ID] = name
+		}
+	}
+	// Генерируем изображение недели
+	imageData, err := common.GenerateWeekImage(weekStart, weekEnd, weekSlots, subjectID, studentNames)
+	if err == nil {
+		// Отправляем изображение с подписью и кнопками
+		b.SendPhoto(ctx, &bot.SendPhotoParams{
+			ChatID:      msg.Chat.ID,
+			Photo:       &models.InputFileUpload{Filename: "week.png", Data: bytes.NewReader(imageData)},
+			Caption:     text,
+			ParseMode:   models.ParseModeHTML,
+			ReplyMarkup: keyboard,
+		})
+		// Удаляем старое сообщение
+		b.DeleteMessage(ctx, &bot.DeleteMessageParams{
+			ChatID:    msg.Chat.ID,
+			MessageID: msg.ID,
+		})
+	} else {
+		// Если не удалось сгенерировать изображение, отправляем текст
+		b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:      msg.Chat.ID,
+			MessageID:   msg.ID,
+			Text:        text,
+			ParseMode:   models.ParseModeHTML,
+			ReplyMarkup: keyboard,
+		})
+	}
 
 	common.AnswerCallback(ctx, b, callback.ID, "")
 }
